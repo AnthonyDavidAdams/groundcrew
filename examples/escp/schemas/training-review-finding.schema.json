@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review of one training module against the evidence",
+  "type": "object",
+  "required": ["module", "citations", "verdict", "last_verified"],
+  "properties": {
+    "module": { "type": "string", "description": "Path under training/modules/" },
+    "citations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["text", "ok"],
+        "properties": {
+          "text": { "type": "string", "description": "The citation as it appears in the module" },
+          "claim_id": { "type": ["string", "null"], "description": "The facts/ claim it should point to, if any" },
+          "source": { "type": ["string", "null"], "format": "uri" },
+          "ok": { "type": "boolean" },
+          "note": { "type": ["string", "null"], "description": "What the source says if not ok" }
+        }
+      }
+    },
+    "verdict": { "enum": ["accurate", "needs_fixes", "unsupported"] },
+    "summary": { "type": ["string", "null"] },
+    "last_verified": { "type": "string", "format": "date" },
+    "notes": { "type": ["string", "null"] }
+  }
+}

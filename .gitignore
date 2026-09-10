@@ -1,0 +1,8 @@
+node_modules/
+state.json
+state.json.*.tmp
+crew/
+.DS_Store
+*.log
+.env
+.env.*

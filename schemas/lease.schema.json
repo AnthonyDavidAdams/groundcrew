@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groundcrew.earthpilot.ai/schemas/lease.schema.json",
+  "title": "Ground Crew lease (returned by claim_task, renew_lease, release_lease, list_leases)",
+  "type": "object",
+  "required": ["id", "task", "scope", "agent", "human", "expires_at"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^lease_[0-9a-f]+$" },
+    "task": { "type": "string", "description": "Task id from tasks/tasks.yaml" },
+    "scope": { "type": "string", "description": "The unit of work being held, e.g. 'MS' or 'Texas, districts A-C'. Compared case-insensitively with whitespace collapsed." },
+    "agent": { "type": "string", "description": "Agent name and version, e.g. 'claude-fable-5-1 via Claude.ai'" },
+    "human": { "type": "string", "description": "The person running the agent: a handle or an email" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time", "description": "Default 4 hours after creation or last renewal" },
+    "renewed": { "type": "integer", "minimum": 0 }
+  }
+}

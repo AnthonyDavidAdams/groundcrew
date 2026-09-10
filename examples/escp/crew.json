@@ -1,0 +1,15 @@
+{
+  "name": "End School Corporal Punishment",
+  "mission": "End the legal hitting of students in United States public schools: district by district until a legislature is ratifying a fact rather than making a decision, then state by state until Congress is.",
+  "repo": "https://github.com/AnthonyDavidAdams/end-school-corporal-punishment",
+  "site": "https://earthpilot.org/kids/",
+  "docs": "https://github.com/AnthonyDavidAdams/end-school-corporal-punishment/blob/main/AGENTS.md",
+  "contact": "a@175g.com",
+  "maintainer_token_env": "ESCP_MAINTAINER_TOKEN",
+  "lease_ttl_hours": 4,
+  "auto_merge": { "enabled": false, "min_approved": 25, "min_approval_rate": 0.95 },
+  "collections": {
+    "districts": "data/schema/district.schema.json",
+    "states": "data/schema/state.schema.json"
+  }
+}

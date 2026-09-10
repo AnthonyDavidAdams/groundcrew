@@ -1,0 +1,35 @@
+{
+  "name": "@earthpilot/groundcrew",
+  "version": "0.1.0",
+  "description": "Ground Crew: an open protocol and reference MCP server for pointing many people's AI agents at one public problem. Part of EarthPilot, mission support for Spaceship Earth.",
+  "license": "MIT",
+  "type": "module",
+  "author": { "name": "Anthony Adams", "email": "a@175g.com" },
+  "homepage": "https://github.com/AnthonyDavidAdams/groundcrew",
+  "engines": { "node": ">=22" },
+  "bin": { "groundcrew": "./bin/groundcrew.mjs" },
+  "exports": {
+    ".": "./server/index.mjs",
+    "./server": "./server/index.mjs",
+    "./crew": "./server/crew.mjs",
+    "./validate": "./server/validate.mjs",
+    "./state": "./server/state.mjs",
+    "./verify": "./server/verify.mjs",
+    "./schemas/*": "./schemas/*"
+  },
+  "files": ["bin", "server", "schemas", "templates", "skills", ".claude-plugin", "README.md", "SPEC.md", "LICENSE"],
+  "scripts": {
+    "start": "node server/index.mjs",
+    "start:http": "node server/index.mjs --http",
+    "test": "node test/groundcrew.test.mjs",
+    "validate": "node bin/groundcrew.mjs validate ./crew"
+  },
+  "keywords": ["mcp", "agents", "civic", "open-data", "protocol", "earthpilot"],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.8.0",
+    "zod": "^4.5.4"
+  }
+}

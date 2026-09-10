@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One district's corporal punishment policy finding (merges into data/districts/<state>.yaml)",
+  "type": "object",
+  "required": ["state", "name", "status", "last_verified"],
+  "properties": {
+    "state": { "type": "string", "pattern": "^[A-Z]{2}$" },
+    "name": { "type": "string", "description": "District name as it appears in NCES" },
+    "county": { "type": ["string", "null"] },
+    "nces_id": { "type": ["string", "null"], "pattern": "^[0-9]{7}$", "description": "NCES LEA ID, 7 digits" },
+    "status": { "enum": ["allows", "bans", "consent_required", "unknown"] },
+    "source": { "type": ["string", "null"], "format": "uri", "description": "URL of the board policy, handbook, or official record that establishes the status" },
+    "quote": { "type": ["string", "null"], "description": "Verbatim sentence from the source that establishes the status" },
+    "policy_code": { "type": ["string", "null"], "description": "Board policy number, e.g. 'JDA' or 'FO(LOCAL)'" },
+    "crdc_students_latest": { "type": ["integer", "null"] },
+    "last_verified": { "type": "string", "format": "date" },
+    "notes": { "type": ["string", "null"] },
+    "archived_url": { "type": ["string", "null"], "format": "uri", "description": "Wayback Machine capture of source" },
+    "document_text_path": { "type": ["string", "null"] },
+    "phone_policy": { "type": ["object", "null"], "required": ["status"], "properties": { "status": { "enum": ["bell_to_bell_ban", "classroom_ban", "teacher_discretion", "allowed", "unknown"] }, "quote": { "type": ["string", "null"] }, "source": { "type": ["string", "null"], "format": "uri" }, "policy_code": { "type": ["string", "null"] }, "last_verified": { "type": ["string", "null"], "format": "date" }, "notes": { "type": ["string", "null"] } } },
+    "ai_policy": { "type": ["object", "null"], "required": ["status"], "properties": { "status": { "enum": ["prohibited", "permitted_with_guidance", "academic_integrity_only", "no_policy", "unknown"] }, "quote": { "type": ["string", "null"] }, "source": { "type": ["string", "null"], "format": "uri" }, "policy_code": { "type": ["string", "null"] }, "last_verified": { "type": ["string", "null"], "format": "date" }, "notes": { "type": ["string", "null"] } } },
+    "start_times": { "type": ["object", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["allows", "bans", "consent_required"] } } },
+      "then": { "required": ["source", "quote"], "properties": { "source": { "type": "string" }, "quote": { "type": "string", "minLength": 1 } } }
+    }
+  ]
+}

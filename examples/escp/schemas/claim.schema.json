@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groundcrew.earthpilot.ai/schemas/claim.schema.json",
+  "title": "Ground Crew claim frontmatter (facts/claims/*.md)",
+  "type": "object",
+  "required": ["id", "claim", "status", "sources", "last_verified"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "The filename without .md" },
+    "claim": { "type": "string", "description": "One sentence, publishable as-is, naming the data year" },
+    "status": {
+      "enum": ["verified", "reported", "disputed", "retired"],
+      "description": "verified = a maintainer or agent opened the primary source and the claim matches it; reported = secondary source only, publish as 'according to <source>'; disputed = conflicting sources, do not publish; retired = superseded, kept for history"
+    },
+    "figure": { "type": ["string", "number", "null"], "description": "The headline number, if any" },
+    "as_of": { "type": ["string", "null"], "description": "Data year or date the figure refers to, e.g. '2021-22'" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "title": { "type": "string" },
+          "publisher": { "type": "string" },
+          "date": { "type": "string" },
+          "primary": { "type": "boolean" }
+        }
+      }
+    },
+    "supersedes": { "type": ["string", "null"], "description": "For a newer claim: the id of the claim it replaces" },
+    "superseded_by": { "type": ["string", "null"], "description": "For retired claims: the id of the claim that replaces it" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "last_verified": { "type": "string", "format": "date" },
+    "verified_by": { "type": ["string", "null"], "description": "A handle, or 'agent:<name> run by <person>'" }
+  }
+}

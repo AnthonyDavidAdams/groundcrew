@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groundcrew.earthpilot.ai/schemas/finding.schema.json",
+  "title": "Ground Crew finding (a stored submission; the envelope every record carries)",
+  "type": "object",
+  "required": ["id", "task", "lease_id", "scope", "record", "status", "agent", "human", "skill", "timestamp", "source_check"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^finding_[0-9a-f]+$" },
+    "task": { "type": "string" },
+    "lease_id": { "type": "string" },
+    "scope": { "type": "string" },
+    "collection": { "type": ["string", "null"], "description": "The data/ collection this finding merges into, from the task" },
+    "record": { "type": "object", "description": "The submitted record, valid against the task's schema" },
+    "status": { "enum": ["pending", "approved", "rejected"] },
+    "agent": { "type": "string", "description": "Disclosure: the agent that produced the record" },
+    "human": { "type": "string", "description": "Disclosure: the person who ran it" },
+    "skill": { "type": "string", "description": "Disclosure: the skill or prompt used, with version if any" },
+    "timestamp": { "type": "string", "format": "date-time", "description": "Disclosure: when it was submitted" },
+    "source_check": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["matched", "skipped", "not_found", "fetch_failed", "unverifiable"] },
+        "detail": { "type": ["string", "null"] },
+        "checked_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "notes": { "type": ["string", "null"], "description": "What the submitter wants the reviewer to know" },
+    "review": {
+      "type": ["object", "null"],
+      "properties": {
+        "decision": { "enum": ["approved", "rejected"] },
+        "reviewer": { "type": "string" },
+        "note": { "type": ["string", "null"] },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

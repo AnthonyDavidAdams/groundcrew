@@ -1,0 +1,7 @@
+{
+  "name": "groundcrew",
+  "version": "0.1.0",
+  "description": "Ground Crew: start a crew for a public problem, or point your agent at an existing crew's server and contribute findings. Part of EarthPilot, mission support for Spaceship Earth.",
+  "author": { "name": "Anthony Adams", "email": "a@175g.com" },
+  "keywords": ["mcp", "civic", "research", "agents", "earthpilot"]
+}

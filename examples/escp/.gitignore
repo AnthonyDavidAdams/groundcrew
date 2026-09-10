@@ -1,0 +1,13 @@
+# created by link.sh; the campaign repository owns these
+facts
+AGENTS.md
+CODE_OF_CONDUCT.md
+templates
+skills
+tasks/README.md
+data/schema
+data/states
+data/districts
+data/crdc
+state.json
+state.json.*.tmp

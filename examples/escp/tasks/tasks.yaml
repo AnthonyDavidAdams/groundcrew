@@ -1,0 +1,97 @@
+# The End School Corporal Punishment task queue, in Ground Crew form. Mirrors tasks/README.md in the campaign
+# repository. Schema paths are finding schemas in this directory's schemas/; skill paths resolve through the
+# skills/ symlink that link.sh creates to the campaign's skills.
+tasks:
+  - id: district-policy-scan
+    title: District policy scan
+    description: For a state, find every public school district, locate its corporal punishment policy, and record status, source URL, verbatim quote, policy code, and (while the handbook is open) the phone, AI, and bell-schedule rules.
+    unit: One state, or a slice of a large state (Texas has over 1,000 districts)
+    output: Entries in data/districts/<XX>.yaml
+    priority: 1
+    schema: schemas/district-finding.schema.json
+    skill: skills/district-policy-scan/SKILL.md
+    collection: districts
+    scopes: [AL, AR, AZ, FL, GA, IN, KS, KY, LA, MO, MS, NC, OK, SC, TN, TX, WY]
+    done_means:
+      - Every non-unknown status has source, quote, and last_verified.
+      - Notes say what was searched for every unknown.
+      - The quote is the sentence that establishes the status, copied verbatim.
+
+  - id: crdc-refresh
+    title: CRDC refresh
+    description: Download a Civil Rights Data Collection release from the Department of Education and regenerate the corporal punishment extracts and the headline claims.
+    unit: One CRDC release year
+    output: data/crdc/<year>/ state and district CSVs plus facts/ figure updates
+    priority: 1
+    schema: schemas/crdc-refresh-finding.schema.json
+    skill: skills/crdc-refresh/SKILL.md
+    collection: crdc
+    scopes: ["2017-18", "2020-21", "2021-22", "2023-24"]
+    done_means:
+      - SOURCE.md names the exact file, download date, and SHA-256.
+      - Superseded claims are retired with superseded_by.
+
+  - id: verify-claim
+    title: Verify a claim
+    description: Open the primary source for a `reported` claim and upgrade it to `verified`, or mark it `disputed` with reasons.
+    unit: One claim file
+    output: facts/claims/<id>.md with status verified or disputed
+    priority: 2
+    schema: schemas/claim.schema.json
+    skill: skills/verify-claim/SKILL.md
+    collection: claims
+    done_means:
+      - The primary source was opened and the claim sentence matches it.
+      - last_verified is today and verified_by names the agent and the person.
+
+  - id: bill-watch
+    title: Bill watch
+    description: Find every corporal punishment bill, rule, or board action in one state's current legislative session and record it.
+    unit: One state, current session
+    output: bills entries in data/states/<XX>.yaml
+    priority: 2
+    schema: schemas/bill-finding.schema.json
+    skill: skills/bill-watch/SKILL.md
+    collection: states
+    scopes: [AL, AR, AZ, FL, GA, IN, KS, KY, LA, MO, MS, NC, OK, SC, TN, TX, WY]
+    done_means:
+      - Every bill has number, session, status, and the official URL.
+      - Bills that would expand or protect corporal punishment are included and marked.
+
+  - id: decision-maker-dossier
+    title: Decision-maker dossier
+    description: For a school board or a state education committee, record each member's public position and votes on corporal punishment, their own stated values, and their self-stated public affiliations, with sources. Public record only.
+    unit: One school board, or one state's education committees
+    output: crm/dossiers/<XX>/<body>.yaml
+    priority: 3
+    schema: schemas/dossier-finding.schema.json
+    skill: skills/decision-maker-dossier/SKILL.md
+    collection: dossiers
+    done_means:
+      - Every item has a URL a member would expect the public to read.
+      - Nothing about family, home, health, finances, or private accounts.
+      - position_on_cp is unknown unless an evidence line justifies otherwise.
+
+  - id: share-kit
+    title: Share kit
+    description: Produce the text and image for one state's share kit from verified claims and that state's district data.
+    unit: One state
+    output: share/<XX>/
+    priority: 4
+    schema: schemas/share-kit-finding.schema.json
+    skill: skills/share-kit/SKILL.md
+    collection: share
+    scopes: [AL, AR, AZ, FL, GA, IN, KS, KY, LA, MO, MS, NC, OK, SC, TN, TX, WY]
+    done_means:
+      - Every number in the kit is a verified claim id.
+
+  - id: training-review
+    title: Training review
+    description: Review one module of the open replacement curriculum against the evidence in facts/ and training/evidence.md, checking every citation.
+    unit: One module in training/modules/
+    output: A review with each citation checked
+    priority: 3
+    schema: schemas/training-review-finding.schema.json
+    collection: training-reviews
+    done_means:
+      - Every citation in the module was opened and is marked ok or not, with a note.

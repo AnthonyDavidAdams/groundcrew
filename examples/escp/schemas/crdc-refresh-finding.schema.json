@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One CRDC release refresh: provenance and the headline figures it produced",
+  "type": "object",
+  "required": ["year", "source", "file_name", "sha256", "downloaded", "students_total", "last_verified"],
+  "properties": {
+    "year": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "description": "School year, e.g. '2021-22'" },
+    "source": { "type": "string", "format": "uri", "description": "The civilrightsdata.ed.gov download page" },
+    "file_name": { "type": "string" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "downloaded": { "type": "string", "format": "date" },
+    "students_total": { "type": "integer", "minimum": 0, "description": "Students receiving corporal punishment, national" },
+    "boys_share": { "type": ["number", "null"] },
+    "black_share": { "type": ["number", "null"] },
+    "black_enrollment_share": { "type": ["number", "null"] },
+    "idea_share": { "type": ["number", "null"] },
+    "districts_reporting_any": { "type": ["integer", "null"] },
+    "schools_reporting_any": { "type": ["integer", "null"] },
+    "columns_used": { "type": "array", "items": { "type": "string" }, "description": "Exact column names, which change between releases" },
+    "outputs": { "type": "array", "items": { "type": "string" }, "description": "Paths written under data/crdc/<year>/" },
+    "claims_created": { "type": "array", "items": { "type": "string" } },
+    "claims_retired": { "type": "array", "items": { "type": "string" } },
+    "last_verified": { "type": "string", "format": "date" },
+    "notes": { "type": ["string", "null"] }
+  }
+}

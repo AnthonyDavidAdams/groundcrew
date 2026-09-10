@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One bill, rule, or board action on school corporal punishment (merges into data/states/<XX>.yaml bills)",
+  "type": "object",
+  "required": ["state", "number", "session", "status", "source", "last_verified"],
+  "properties": {
+    "state": { "type": "string", "pattern": "^[A-Z]{2}$" },
+    "number": { "type": "string", "description": "e.g. 'HB 772'" },
+    "session": { "type": "string" },
+    "sponsor": { "type": ["string", "null"] },
+    "summary": { "type": ["string", "null"], "description": "One sentence; say if the bill would expand or protect corporal punishment" },
+    "direction": { "enum": ["ban", "narrow", "expand", "protect", "other", null] },
+    "status": { "enum": ["pending", "passed", "failed", "vetoed", "signed"] },
+    "source": { "type": "string", "format": "uri", "description": "Official legislature or LegiScan URL for the bill" },
+    "quote": { "type": ["string", "null"], "description": "Verbatim line from the bill page that establishes its status or subject" },
+    "last_verified": { "type": "string", "format": "date" },
+    "notes": { "type": ["string", "null"] }
+  }
+}

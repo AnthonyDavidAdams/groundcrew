@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "groundcrew",
+  "description": "Ground Crew skills: create a crew for a new public problem, or contribute to an existing crew through its MCP server",
+  "owner": { "name": "Anthony Adams", "email": "a@175g.com" },
+  "plugins": [
+    {
+      "name": "groundcrew",
+      "description": "Two skills. crew-init interviews you for a mission, values, and first tasks, writes the crew directory, and validates it. crew-contribute connects to a crew's server URL, reads the contract, claims a scope, does the task, and submits findings.",
+      "author": { "name": "Anthony Adams" },
+      "category": "research",
+      "source": "./"
+    }
+  ]
+}

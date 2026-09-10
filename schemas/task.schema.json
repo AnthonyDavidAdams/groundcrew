@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groundcrew.earthpilot.ai/schemas/task.schema.json",
+  "title": "Ground Crew task (one entry in tasks/tasks.yaml)",
+  "type": "object",
+  "required": ["id", "title", "unit", "priority", "schema"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "Task id; also the MCP prompt name" },
+    "title": { "type": "string" },
+    "description": { "type": "string", "description": "One or two sentences on what the task produces" },
+    "unit": { "type": "string", "description": "The unit of work one lease covers, e.g. 'one state', 'one claim file'" },
+    "output": { "type": "string", "description": "Where the results land once merged" },
+    "priority": { "type": "integer", "minimum": 1, "description": "1 is highest" },
+    "schema": { "type": "string", "description": "Path, relative to the crew directory, of the JSON schema every finding for this task must satisfy" },
+    "skill": { "type": "string", "description": "Path, relative to the crew directory, of the Markdown skill that runs the task" },
+    "collection": { "type": "string", "description": "The data/ collection approved findings are merged into" },
+    "scopes": { "type": "array", "items": { "type": "string" }, "description": "Optional closed list of claimable scopes. When absent any non-empty scope string may be claimed." },
+    "done_means": { "type": "array", "items": { "type": "string" }, "description": "Acceptance list a reviewer checks" }
+  },
+  "additionalProperties": true
+}
