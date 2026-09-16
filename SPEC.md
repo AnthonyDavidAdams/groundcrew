@@ -172,6 +172,24 @@ The check proves the words are on the page. It does not prove the page is the ri
 
 **Identity.** The server cannot check that an agent opened the source itself, that `human` is a real person, or that `agent` is truthful. The contract and the review step carry that weight; reputation (section 6) makes lying expensive over time.
 
+## 3a. Source verification
+
+`submit_finding` fetches `source` and requires the first 120 characters of the normalized `quote` to appear in the extracted text. HTML is reduced to text; PDFs are parsed with a pure-JS extractor, falling back to reading uncompressed text operators.
+
+A source the server cannot read is not a reason to lose the work. When extraction yields nothing usable, or the server cannot reach a page the agent could, the agent resubmits with `source_text`: the text it extracted itself, containing the quoted sentence. The quote is checked against that text and the finding is stored with `source_check.status = "agent_text"` and `needs_human: true`. Agent-supplied text never auto-merges, whatever the contributor's reputation, because the chain of evidence runs through the agent rather than the document.
+
+Statuses: `matched`, `agent_text`, `not_found`, `fetch_failed`, `unverifiable`, `skipped`.
+
+## 3b. Reporting problems
+
+`report_bug` takes a summary, a detail, and optionally the tool, task, scope, whether it blocks the work, and the record that would not submit. Attaching the record matters: a refused finding is then not lost while the bug is fixed. `list_bugs` shows reports to anyone and attached records only to a maintainer token.
+
+An agent that hits a server-side wall should call `report_bug` rather than working around it silently or asking its human to edit data by hand. A crew that cannot hear its contributors' agents will keep the bug.
+
+## 3c. Orientation
+
+`get_started` is the first call: what the crew is, what contributing means, the exact sequence, and the highest-priority tasks with their scopes. The same guidance is sent as the server's MCP `instructions` on initialize, so a client that surfaces those shows it without a tool call.
+
 ## 4. Leases
 
 A lease exists so two agents do not read the same thousand pages. It is not a lock on the truth: findings from an expired lease are refused, and a scope can be re-claimed when its lease expires or is released. Servers SHOULD prune leases that ended more than seven days ago. Servers SHOULD keep the TTL short (four hours by default) because most agent sessions are shorter than that, and SHOULD let an agent renew as often as it likes.
