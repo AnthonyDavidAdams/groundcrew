@@ -68,10 +68,45 @@ export function createServer(ctx) {
     { name: `groundcrew:${slug(crew.name)}`, version: VERSION },
     {
       instructions:
-        `${crew.name}. ${crew.mission} ` +
-        "This is a Ground Crew server (EarthPilot). Start with get_crew and get_agent_contract, then list_tasks. Claim a scope with claim_task before doing work; the lease is what stops two agents reading the same thing. " +
-        "Every finding you submit must come from a source you opened yourself in this session; submit_finding validates the record against the task's schema and checks the quote against the fetched source, and a person reviews it before it merges. " +
+        "This is a Ground Crew server. It holds one public problem's verified facts, its data, and its task queue, and it accepts findings from any agent. " +
+        "Call get_started first: it explains what contributing means here and gives you the exact first calls. " +
+        "The contract, in short: open every source yourself in this session, quote the sentence verbatim, date everything, never guess, never name a minor. " +
+        "Work is leased so contributors do not duplicate each other (claim_task), and every finding is checked against its source and reviewed by a person before it enters the record (submit_finding). " +
+        "If the server refuses a finding you believe is correct, or a tool behaves differently from its description, call report_bug rather than working around it; if the server cannot read a source you could read, resubmit with source_text. " +
         "Facts: quote only status 'verified' claims as fact; 'reported' ones only as 'according to <source>'.",
+    }
+  );
+
+  // ---- orientation ----
+  server.registerTool(
+    "get_started",
+    {
+      title: "Start here",
+      description: "Orientation for a person or agent that has just connected: what this crew is, what contributing means, and the exact first calls to make. Call this before anything else.",
+      inputSchema: {},
+    },
+    async () => {
+      const top = [...crew.tasks].sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9)).slice(0, 3);
+      return text({
+        crew: crew.name,
+        mission: crew.mission,
+        what_this_is:
+          "A Ground Crew server. It holds a public problem's verified facts, its data, and its task queue, and it accepts new findings from anyone's agent. " +
+          "You do the reading on your own subscription; the server checks your work against its sources and a person reviews it before it becomes part of the record.",
+        how_contributing_works: [
+          "1. get_agent_contract: the rules. Open every source yourself, quote verbatim, date everything, never guess, no minors identified.",
+          "2. list_tasks: pick one, and pick a scope inside it (usually a state or a slice of one).",
+          "3. claim_task: takes a lease so nobody duplicates your work. Leases expire; renew_lease extends, release_lease hands it back.",
+          "4. Do the work: find the primary document, open it, read the sentence that settles the question.",
+          "5. submit_finding: one call per record. The server fetches your source and checks your quote against it. A record that fails is refused and not stored.",
+          "6. A maintainer reviews. get_contributor shows your record.",
+        ],
+        if_something_breaks:
+          "Call report_bug. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted; the finding is stored and flagged for a human rather than lost.",
+        good_first_moves: top.map((t) => ({ task: t.id, title: t.title, unit: t.unit ?? null, scopes: Array.isArray(t.scopes) ? t.scopes.slice(0, 20) : null })),
+        read_the_values: "get_crew returns values.md in full. Contributions that conflict with it are declined, however well sourced.",
+        links: { repo: crew.crew.repo ?? null, site: crew.crew.site ?? null, contact: crew.crew.contact ?? null },
+      });
     }
   );
 
@@ -271,9 +306,10 @@ export function createServer(ctx) {
         record: z.record(z.string(), z.unknown()).describe("The record, in the shape of the task's schema"),
         skill: z.string().trim().min(1).optional().describe("Skill or prompt used, with version, e.g. 'district-policy-scan@0.1'. Defaults to the task's skill file name."),
         notes: z.string().trim().optional().describe("Anything the reviewer needs: what was searched, conflicting documents, why a field is null"),
+        source_text: z.string().trim().min(40).optional().describe("Only when the server cannot read the source itself: the text you extracted from it, containing the quoted sentence. Use this for scanned PDFs with no text layer, and for pages the server cannot reach but you could. The finding is stored, flagged as agent-supplied, and always sent to a human, never auto-merged."),
       },
     },
-    async ({ task, lease_id, record, skill, notes }) => {
+    async ({ task, lease_id, record, skill, notes, source_text }) => {
       const t = crew.tasksById[task];
       if (!t) return fail(`No task '${task}'.`);
       const lease = store.findLease(lease_id);
@@ -286,7 +322,7 @@ export function createServer(ctx) {
       if (!validate) return fail(`Task '${task}' has no readable schema (${t.schema}); the crew maintainer must fix tasks/tasks.yaml.`);
       if (!validate(record)) return fail(`Record does not match the schema for '${task}' (${t.schema}).`, { errors: formatErrors(validate.errors) });
 
-      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl });
+      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl, sourceText: source_text });
       if (!check.ok) return fail(`Source check failed (${check.status}): ${check.detail}. The finding was not stored. Fix the quote or source and resubmit.`, { source: record.source, quote_prefix: String(record.quote).slice(0, 120) });
 
       const now = new Date().toISOString();
@@ -308,7 +344,7 @@ export function createServer(ctx) {
       };
       delete finding.source_check.ok;
 
-      if (autoMerge.enabled) {
+      if (autoMerge.enabled && check.status !== "agent_text") {
         const rep = store.contributor({ human: lease.human });
         if (rep.approved >= autoMerge.min_approved && (rep.approval_rate ?? 0) >= autoMerge.min_approval_rate) {
           finding.status = "approved";
@@ -350,6 +386,74 @@ export function createServer(ctx) {
       const r = store.review(id, { decision, reviewer, note });
       if (!r.ok) return fail(`Cannot review ${id}: ${r.reason}`);
       return text({ id, status: r.finding.status, review: r.finding.review, contributor: store.contributor({ human: r.finding.human }) });
+    }
+  );
+
+  server.registerTool(
+    "report_bug",
+    {
+      title: "Report a bug or a blocker",
+      description:
+        "Tell the maintainers that something on the server side is wrong or is blocking you: a check that refuses a correct finding, a tool that behaves differently from its description, a schema that cannot express what the source says, a source the server cannot read. " +
+        "Use it instead of working around the problem silently, and instead of asking your human to patch data by hand. Include what you were doing and what you expected.",
+      inputSchema: {
+        summary: z.string().trim().min(10).max(200).describe("One line: what is broken"),
+        detail: z.string().trim().min(20).describe("What you did, what happened, what you expected. Include the exact tool call and the exact error text."),
+        tool: z.string().trim().optional().describe("The tool involved, e.g. submit_finding"),
+        task: z.string().trim().optional().describe("Task id, if the bug happened inside one"),
+        scope: z.string().trim().optional().describe("Scope you were working, e.g. TX"),
+        blocking: z.boolean().optional().describe("True if you cannot complete the work at all because of this"),
+        agent: z.string().trim().optional().describe("Your name and model"),
+        human: z.string().trim().optional().describe("The person running you"),
+        record: z.record(z.string(), z.unknown()).optional().describe("The record you were trying to submit, if any, so the work is not lost"),
+      },
+    },
+    async (a) => {
+      const bug = {
+        id: newId("bug"),
+        summary: a.summary,
+        detail: a.detail,
+        tool: a.tool ?? null,
+        task: a.task ?? null,
+        scope: a.scope ?? null,
+        blocking: a.blocking ?? false,
+        agent: a.agent ?? null,
+        human: a.human ?? null,
+        record: a.record ?? null,
+        server_version: VERSION,
+        protocol: PROTOCOL,
+        status: "open",
+        at: new Date().toISOString(),
+      };
+      store.addBug(bug);
+      return text({
+        id: bug.id,
+        status: "open",
+        thanks: "Logged. A maintainer sees this with list_bugs.",
+        next: a.record
+          ? "Your record was saved with the report, so the work is not lost even though the finding was refused."
+          : "If you had a record that would not submit, call report_bug again with it in `record` so the work is not lost.",
+        workaround: a.tool === "submit_finding" ? "If the server could not read a source you could read: resubmit with `source_text` set to the text you extracted from it." : null,
+      });
+    }
+  );
+
+  server.registerTool(
+    "list_bugs",
+    {
+      title: "List reported bugs",
+      description: "Bug reports from contributors, newest last. Maintainer view: pass the maintainer token to see the attached records.",
+      inputSchema: { open_only: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional(), token: z.string().optional() },
+    },
+    async ({ open_only = true, limit = 50, token }, extra) => {
+      const rows = (store.state.bugs ?? []).filter((b) => (open_only ? b.status === "open" : true));
+      const expected = ctx.maintainerToken();
+      const given = token ?? bearerFrom(extra);
+      const authorised = Boolean(expected && given && given === expected);
+      return text({
+        count: rows.length,
+        bugs: rows.slice(-limit).map((b) => (authorised ? b : { ...b, record: b.record ? "(maintainer token required)" : null })),
+      });
     }
   );
 

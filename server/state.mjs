@@ -12,7 +12,7 @@ export function newId(prefix) {
 }
 
 export function emptyState() {
-  return { version: 1, leases: [], findings: [] };
+  return { version: 1, leases: [], findings: [], bugs: [] };
 }
 
 export class StateStore {
@@ -96,6 +96,12 @@ export class StateStore {
   }
 
   // ---- findings ----
+  addBug(bug) {
+    (this.state.bugs ||= []).push(bug);
+    this.save();
+    return bug;
+  }
+
   addFinding(finding) {
     this.state.findings.push(finding);
     this.save();

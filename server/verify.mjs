@@ -53,7 +53,8 @@ export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_M
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > MAX_SOURCE_BYTES) throw new Error(`source larger than ${MAX_SOURCE_BYTES} bytes`);
     if (type.includes("application/pdf") || buf.subarray(0, 5).toString() === "%PDF-") {
-      return { text: pdfTextBestEffort(buf), content_type: type || "application/pdf", bytes: buf.length, pdf: true };
+      const { text, extracted_by } = await pdfText(buf);
+      return { text, content_type: type || "application/pdf", bytes: buf.length, pdf: true, extracted_by };
     }
     const raw = buf.toString("utf8");
     const text = type.includes("html") || /<\/?[a-z][^>]*>/i.test(raw.slice(0, 2000)) ? htmlToText(raw) : raw;
@@ -63,8 +64,21 @@ export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_M
   }
 }
 
-// PDFs are not parsed here; we pull out any uncompressed text operators so plain PDFs still match.
-// Compressed streams (most PDFs) will not match and the finding is reported as `source_check: unverifiable`.
+// Real PDF text extraction (pure JS, no native deps, works on Alpine). Falls back to pulling
+// uncompressed text operators if the parser cannot read the file, which is the case for scans.
+async function pdfText(buf) {
+  try {
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(buf));
+    const { text } = await extractText(pdf, { mergePages: true });
+    if (normalizeText(text).length >= 200) return { text, extracted_by: "unpdf" };
+  } catch { /* fall through */ }
+  return { text: pdfTextBestEffort(buf), extracted_by: "operators" };
+}
+
+// Last resort for PDFs the parser cannot open: pull any uncompressed text operators.
+// A scanned PDF has no text layer at all and will still come back empty, which is what
+// `source_text` on submit_finding is for.
 function pdfTextBestEffort(buf) {
   const s = buf.toString("latin1");
   const parts = [];
@@ -78,16 +92,35 @@ function pdfTextBestEffort(buf) {
 // Returns { ok, status, detail }. status: "matched" | "not_found" | "fetch_failed" | "unverifiable" | "skipped".
 export async function verifyQuote(record, opts = {}) {
   const source = record?.source, quote = record?.quote;
+  const supplied = opts.sourceText;
   if (!source || !quote) return { ok: true, status: "skipped", detail: "record has no source and quote pair" };
   let fetched;
   try {
     fetched = await fetchSourceText(source, opts);
   } catch (err) {
+    // The source may be unreachable from the server while the agent could read it. Agent-supplied
+    // text is weaker evidence, so it is accepted but always flagged for a human.
+    if (supplied && quoteAppears(quote, supplied)) {
+      return { ok: true, status: "agent_text", detail: `the server could not fetch the source (${err.message}); the quote was found in the text you supplied. A maintainer must confirm it against the source.`, needs_human: true };
+    }
     return { ok: false, status: "fetch_failed", detail: err.message };
   }
-  if (quoteAppears(quote, fetched.text)) return { ok: true, status: "matched", detail: `first ${QUOTE_PREFIX_CHARS} characters of the quote found in ${fetched.content_type || "the source"} (${fetched.bytes} bytes)` };
-  if (fetched.pdf && normalizeText(fetched.text).length < 200) {
-    return { ok: false, status: "unverifiable", detail: "source is a PDF whose text could not be extracted; attach the extracted text or a text-layer URL" };
+  if (quoteAppears(quote, fetched.text)) {
+    return { ok: true, status: "matched", detail: `first ${QUOTE_PREFIX_CHARS} characters of the quote found in ${fetched.content_type || "the source"} (${fetched.bytes} bytes${fetched.extracted_by ? `, text via ${fetched.extracted_by}` : ""})` };
   }
-  return { ok: false, status: "not_found", detail: `the quote does not appear in the fetched source (${fetched.content_type || "unknown type"}, ${fetched.bytes} bytes)` };
+  const thin = fetched.pdf && normalizeText(fetched.text).length < 200;
+  if (supplied && quoteAppears(quote, supplied)) {
+    return {
+      ok: true,
+      status: "agent_text",
+      detail: thin
+        ? "the source is a PDF with no extractable text layer, probably a scan; the quote was found in the text you supplied. A maintainer must confirm it against the source."
+        : "the quote was not found in the text the server extracted, but was found in the text you supplied. A maintainer must confirm it against the source.",
+      needs_human: true,
+    };
+  }
+  if (thin) {
+    return { ok: false, status: "unverifiable", detail: "the source is a PDF with no extractable text layer, probably a scan. Resubmit with `source_text` set to the text you extracted from it, and a maintainer will confirm the quote against the document." };
+  }
+  return { ok: false, status: "not_found", detail: `the quote does not appear in the fetched source (${fetched.content_type || "unknown type"}, ${fetched.bytes} bytes). Check for a typo, a different edition of the document, or use \`source_text\` if you read a version the server cannot reach.` };
 }
