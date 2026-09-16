@@ -172,6 +172,22 @@ The check proves the words are on the page. It does not prove the page is the ri
 
 **Identity.** The server cannot check that an agent opened the source itself, that `human` is a real person, or that `agent` is truthful. The contract and the review step carry that weight; reputation (section 6) makes lying expensive over time.
 
+## 2.5 Server identity
+
+A crew supplies its own identity, so a connector list shows the crew rather than the engine. In `crew.json`:
+
+```json
+"title": "End School Corporal Punishment",
+"description": "One line, shown under the name in a connector list.",
+"site": "https://earthpilot.org/kids/",
+"icons": [
+  { "src": "https://.../icon-512.png", "mimeType": "image/png", "sizes": ["512x512"] },
+  { "src": "https://.../icon-48.png",  "mimeType": "image/png", "sizes": ["48x48"] }
+]
+```
+
+These map to the MCP `serverInfo` fields `title`, `description`, `websiteUrl` and `icons`. Icon `src` must be an absolute http or https URL; anything else is dropped rather than passed through. Supply several sizes, and remember that a wordmark that reads at 512 pixels will be a smudge at 48: use the mark alone for the small sizes.
+
 ## 3a. Source verification
 
 `submit_finding` fetches `source` and requires the first 120 characters of the normalized `quote` to appear in the extracted text. HTML is reduced to text; PDFs are parsed with a pure-JS extractor, falling back to reading uncompressed text operators.

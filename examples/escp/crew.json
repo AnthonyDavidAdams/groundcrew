@@ -29,5 +29,37 @@
     "what_one_contribution_does": "One district scanned is one board whose policy is on the public record with the sentence that proves it, joined to the federal count of how many of its students were struck. That is what a parent brings to a board meeting, what a reporter quotes, and what a legislator is handed at a hearing. About 830 districts reported using it; roughly 100 are done.",
     "cost": "Your assistant's own time and tokens, on the subscription you already pay for. Nothing is billed by this project and no account is needed. A careful district takes a few minutes; a state takes an evening.",
     "other_ways": "If you would rather not run a scan: verify one fact against its source, add your own district's policy, or if you are a parent in one of these states, file the written refusal at earthpilot.org/kids and tell other parents. If you have run a school, the most valuable hour you could give is reviewing one module of the training."
-  }
+  },
+  "title": "End School Corporal Punishment",
+  "description": "The open record of where US schools may still legally hit students, and the work of ending it. Part of EarthPilot.",
+  "icons": [
+    {
+      "src": "https://earthpilot.org/wp-content/uploads/brand/earthpilot-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    },
+    {
+      "src": "https://earthpilot.org/wp-content/uploads/brand/earthpilot-192.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "192x192"
+      ]
+    },
+    {
+      "src": "https://earthpilot.org/wp-content/uploads/brand/earthpilot-96.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "96x96"
+      ]
+    },
+    {
+      "src": "https://earthpilot.org/wp-content/uploads/brand/earthpilot-48.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "48x48"
+      ]
+    }
+  ]
 }

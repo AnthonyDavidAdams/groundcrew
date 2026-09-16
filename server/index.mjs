@@ -64,8 +64,19 @@ function bearerFrom(extra) {
 // ---------------------------------------------------------------------------
 export function createServer(ctx) {
   const { crew, store, ttlHours, autoMerge } = ctx;
+  // Identity shown in the client's connector list: name, title, description, site and icons,
+  // all supplied by the crew so each one looks like itself rather than like the engine.
+  const identity = { name: `groundcrew:${slug(crew.name)}`, version: VERSION };
+  if (crew.crew.title || crew.name) identity.title = crew.crew.title ?? crew.name;
+  if (crew.crew.description || crew.mission) identity.description = crew.crew.description ?? crew.mission;
+  if (crew.crew.site) identity.websiteUrl = crew.crew.site;
+  if (Array.isArray(crew.crew.icons) && crew.crew.icons.length) {
+    identity.icons = crew.crew.icons
+      .filter((i) => i && typeof i.src === "string" && /^https?:\/\//.test(i.src))
+      .map((i) => ({ src: i.src, ...(i.mimeType ? { mimeType: i.mimeType } : {}), ...(Array.isArray(i.sizes) && i.sizes.length ? { sizes: i.sizes } : {}), ...(i.theme ? { theme: i.theme } : {}) }));
+  }
   const server = new McpServer(
-    { name: `groundcrew:${slug(crew.name)}`, version: VERSION },
+    identity,
     {
       instructions:
         "This is a Ground Crew server. It holds one public problem's verified facts, its data, and its task queue, and it accepts findings from any agent. " +
