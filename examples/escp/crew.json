@@ -7,9 +7,27 @@
   "contact": "a@175g.com",
   "maintainer_token_env": "ESCP_MAINTAINER_TOKEN",
   "lease_ttl_hours": 4,
-  "auto_merge": { "enabled": false, "min_approved": 25, "min_approval_rate": 0.95 },
+  "auto_merge": {
+    "enabled": false,
+    "min_approved": 25,
+    "min_approval_rate": 0.95
+  },
   "collections": {
     "districts": "data/schema/district.schema.json",
     "states": "data/schema/state.schema.json"
+  },
+  "brief": {
+    "summary": "In fifteen US states a public school employee may still hit a child with a wooden paddle as punishment, and does. This project is building the record that ends it: every state's law, every district's policy, sourced and quotable, plus a free replacement curriculum for the schools that still use it.",
+    "why": "Corporal punishment is concentrated in a few hundred school boards, and school boards are the cheapest lever in American politics: five to nine people, public meetings, three-minute comment slots. The obstacle is not persuasion, it is that nobody has written down which districts still do it. That is reading work, and it is what your assistant can do.",
+    "headline_claims": [
+      "crdc-national-total-2021-22",
+      "law-states-permitting-count",
+      "crdc-top-four-states-share-2021-22",
+      "crdc-black-students-share-2021-22",
+      "intl-oecd-36-of-38"
+    ],
+    "what_one_contribution_does": "One district scanned is one board whose policy is on the public record with the sentence that proves it, joined to the federal count of how many of its students were struck. That is what a parent brings to a board meeting, what a reporter quotes, and what a legislator is handed at a hearing. About 830 districts reported using it; roughly 100 are done.",
+    "cost": "Your assistant's own time and tokens, on the subscription you already pay for. Nothing is billed by this project and no account is needed. A careful district takes a few minutes; a state takes an evening.",
+    "other_ways": "If you would rather not run a scan: verify one fact against its source, add your own district's policy, or if you are a parent in one of these states, file the written refusal at earthpilot.org/kids and tell other parents. If you have run a school, the most valuable hour you could give is reviewing one module of the training."
   }
 }

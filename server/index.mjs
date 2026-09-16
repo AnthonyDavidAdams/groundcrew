@@ -87,12 +87,36 @@ export function createServer(ctx) {
     },
     async () => {
       const top = [...crew.tasks].sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9)).slice(0, 3);
+      const brief = crew.crew.brief ?? {};
+      // Headline facts come from the crew's own verified claims, so the pitch cannot drift from the record.
+      const headline = (brief.headline_claims ?? [])
+        .map((id) => crew.claims.find((c) => c.id === id))
+        .filter(Boolean)
+        .map((c) => ({ claim: c.claim, as_of: c.as_of ?? null, source: (c.sources ?? []).find((x) => x.primary)?.url ?? (c.sources ?? [])[0]?.url ?? null, id: c.id }));
+      const verified = crew.claims.filter((c) => c.status === "verified");
       return text({
         crew: crew.name,
         mission: crew.mission,
-        what_this_is:
-          "A Ground Crew server. It holds a public problem's verified facts, its data, and its task queue, and it accepts new findings from anyone's agent. " +
-          "You do the reading on your own subscription; the server checks your work against its sources and a person reviews it before it becomes part of the record.",
+
+        // --- for the person who just connected this server ---
+        for_your_human: {
+          read_this_to_them: brief.summary ??
+            `${crew.name}. ${crew.mission} This server holds the project's verified facts and its open work, and accepts contributions from anyone's assistant.`,
+          why_it_matters: brief.why ?? null,
+          the_facts: headline.length ? headline : verified.slice(0, 4).map((c) => ({ claim: c.claim, as_of: c.as_of ?? null, id: c.id })),
+          what_one_contribution_does: brief.what_one_contribution_does ??
+            "Each finding you submit is one verified, sourced record added to a public dataset that anyone can cite. Nothing is taken on trust: the server checks your quote against the document, and a person reviews it.",
+          what_it_costs_them: brief.cost ??
+            "Your own assistant's time and tokens, on their existing subscription. Nothing is billed by this project, and no account is required.",
+          what_they_should_decide: [
+            "Which task, and which scope inside it. Most tasks are scoped by state.",
+            "How much to take on. A scope can be a whole state or a slice of one; a lease can be released at any time.",
+            "Whether they want their name on the record. Findings carry the human who ran the agent.",
+          ],
+          they_can_also: brief.other_ways ?? null,
+        },
+
+        // --- for you, the agent ---
         how_contributing_works: [
           "1. get_agent_contract: the rules. Open every source yourself, quote verbatim, date everything, never guess, no minors identified.",
           "2. list_tasks: pick one, and pick a scope inside it (usually a state or a slice of one).",
@@ -102,8 +126,8 @@ export function createServer(ctx) {
           "6. A maintainer reviews. get_contributor shows your record.",
         ],
         if_something_breaks:
-          "Call report_bug. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted; the finding is stored and flagged for a human rather than lost.",
-        good_first_moves: top.map((t) => ({ task: t.id, title: t.title, unit: t.unit ?? null, scopes: Array.isArray(t.scopes) ? t.scopes.slice(0, 20) : null })),
+          "Call report_bug, and attach the record that would not submit so the work is not lost. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted.",
+        good_first_moves: top.map((t) => ({ task: t.id, title: t.title, unit: t.unit ?? null, priority: t.priority ?? null, scopes: Array.isArray(t.scopes) ? t.scopes.slice(0, 20) : null })),
         read_the_values: "get_crew returns values.md in full. Contributions that conflict with it are declined, however well sourced.",
         links: { repo: crew.crew.repo ?? null, site: crew.crew.site ?? null, contact: crew.crew.contact ?? null },
       });
