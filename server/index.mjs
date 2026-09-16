@@ -341,10 +341,13 @@ export function createServer(ctx) {
         record: z.record(z.string(), z.unknown()).describe("The record, in the shape of the task's schema"),
         skill: z.string().trim().min(1).optional().describe("Skill or prompt used, with version, e.g. 'district-policy-scan@0.1'. Defaults to the task's skill file name."),
         notes: z.string().trim().optional().describe("Anything the reviewer needs: what was searched, conflicting documents, why a field is null"),
-        source_text: z.string().trim().min(40).optional().describe("Only when the server cannot read the source itself: the text you extracted from it, containing the quoted sentence. Use this for scanned PDFs with no text layer, and for pages the server cannot reach but you could. The finding is stored, flagged as agent-supplied, and always sent to a human, never auto-merged."),
+        source_text: z.string().trim().min(40).optional().describe("The text you read, containing the quoted sentence. Supply it whenever the server might not be able to read the source itself: scanned PDFs with no text layer, pages behind a bot challenge, and hosts that block or rate-limit the server. The server still tries the source first; if it cannot read it, or the quote is not in what it got, your text is used instead and the finding is stored, flagged as agent-supplied, and always sent to a human, never auto-merged. Aliases: document_text, extracted_text."),
+        document_text: z.string().trim().min(40).optional().describe("Alias for source_text."),
+        extracted_text: z.string().trim().min(40).optional().describe("Alias for source_text."),
       },
     },
-    async ({ task, lease_id, record, skill, notes, source_text }) => {
+    async ({ task, lease_id, record, skill, notes, source_text, document_text, extracted_text }) => {
+      const suppliedText = source_text ?? document_text ?? extracted_text;
       const t = crew.tasksById[task];
       if (!t) return fail(`No task '${task}'.`);
       const lease = store.findLease(lease_id);
@@ -357,7 +360,7 @@ export function createServer(ctx) {
       if (!validate) return fail(`Task '${task}' has no readable schema (${t.schema}); the crew maintainer must fix tasks/tasks.yaml.`);
       if (!validate(record)) return fail(`Record does not match the schema for '${task}' (${t.schema}).`, { errors: formatErrors(validate.errors) });
 
-      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl, sourceText: source_text });
+      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl, sourceText: suppliedText });
       if (!check.ok) return fail(`Source check failed (${check.status}): ${check.detail}. The finding was not stored. Fix the quote or source and resubmit.`, { source: record.source, quote_prefix: String(record.quote).slice(0, 120) });
 
       const now = new Date().toISOString();
