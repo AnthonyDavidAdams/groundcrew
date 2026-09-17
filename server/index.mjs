@@ -13,6 +13,7 @@
 
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { resolve, basename, dirname } from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,7 +24,9 @@ import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state
 import { newAjv, formatErrors } from "./validate.mjs";
 import { verifyQuote } from "./verify.mjs";
 
-export const VERSION = "0.1.0";
+// Read from package.json so a deploy cannot report a version it is not running.
+const require_ = createRequire(import.meta.url);
+export const VERSION = require_("../package.json").version;
 export const PROTOCOL = "groundcrew/0.1";
 
 const text = (obj) => ({ content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] });
