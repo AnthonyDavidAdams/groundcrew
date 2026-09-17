@@ -640,6 +640,59 @@ export function createServer(ctx) {
   );
 
   server.registerTool(
+    "export_findings",
+    {
+      title: "Export findings for merging",
+      description:
+        "Approved findings as records, ready to merge into the crew's data files. This is the last mile: a finding is not part of the record until it lands in the repository. " +
+        `Requires the maintainer token (${ctx.tokenEnv}), as \`token\` or an Authorization: Bearer header. ` +
+        "Pass `since` to take only what has arrived since the last export, and `mark_exported` to stamp them so the next export skips them.",
+      inputSchema: {
+        status: z.enum(["approved", "pending", "rejected", "all"]).optional().describe("Default approved"),
+        task: z.string().optional(),
+        since: z.string().optional().describe("ISO timestamp; only findings reviewed after it"),
+        include_exported: z.boolean().optional().describe("Include ones already stamped as exported (default false)"),
+        mark_exported: z.boolean().optional().describe("Stamp the returned findings so the next export skips them"),
+        limit: z.number().int().min(1).max(1000).optional(),
+        token: z.string().optional(),
+      },
+    },
+    async ({ status = "approved", task, since, include_exported = false, mark_exported = false, limit = 500, token }, extra) => {
+      const expected = ctx.maintainerToken();
+      if (!expected) return fail(`This server has no maintainer token configured (set ${ctx.tokenEnv}); export_findings is disabled.`);
+      const given = token ?? bearerFrom(extra);
+      if (!given || given !== expected) return fail("Wrong or missing maintainer token.");
+
+      let rows = store.state.findings.filter((f) => (status === "all" || f.status === status) && (!task || f.task === task));
+      if (!include_exported) rows = rows.filter((f) => !f.exported_at);
+      if (since) { const t = Date.parse(since); if (!Number.isNaN(t)) rows = rows.filter((f) => Date.parse(f.review?.at ?? f.timestamp) > t); }
+      rows = rows.slice(0, limit);
+
+      if (mark_exported && rows.length) {
+        const at = new Date().toISOString();
+        for (const r of rows) { const f = store.state.findings.find((x) => x.id === r.id); if (f) f.exported_at = at; }
+        store.save();
+      }
+
+      return text({
+        count: rows.length,
+        collection_hint: rows[0]?.collection ?? null,
+        findings: rows.map((f) => ({
+          id: f.id, task: f.task, scope: f.scope, collection: f.collection,
+          record: f.record,
+          source_check: f.source_check?.status ?? null,
+          agent: f.agent, human: f.human, skill: f.skill,
+          submitted_at: f.timestamp, reviewed_at: f.review?.at ?? null, reviewer: f.review?.reviewer ?? null,
+          notes: f.notes ?? null,
+        })),
+        next: mark_exported
+          ? "Stamped. Merge them into the crew's data files and commit; the next export will skip these."
+          : "Merge these, then call again with mark_exported to stamp them.",
+      });
+    }
+  );
+
+  server.registerTool(
     "get_contributor",
     {
       title: "Contributor record",
