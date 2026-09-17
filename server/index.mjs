@@ -14,7 +14,8 @@
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { resolve, basename, dirname } from "node:path";
+import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
+import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -50,7 +51,9 @@ export function createContext({ crewDir = process.env.GROUNDCREW_CREW ?? "./crew
   const maintainerToken = () => env[tokenEnv] || null;
   const ttlHours = Number(env.GROUNDCREW_LEASE_TTL_HOURS ?? crew.crew.lease_ttl_hours ?? DEFAULT_LEASE_TTL_HOURS) || DEFAULT_LEASE_TTL_HOURS;
   const autoMerge = { enabled: false, min_approved: 10, min_approval_rate: 0.9, ...(crew.crew.auto_merge ?? {}) };
-  return { crew, store, validatorFor, maintainerToken, tokenEnv, ttlHours, autoMerge, fetchImpl, crewDir: resolve(crewDir), statePath: resolve(statePath) };
+  const issuesDir = env.GROUNDCREW_ISSUES_DIR || join(dirname(resolve(statePath)), "issues");
+  const githubToken = () => env.GITHUB_TOKEN || null;
+  return { crew, store, validatorFor, maintainerToken, githubToken, tokenEnv, ttlHours, autoMerge, fetchImpl, issuesDir, crewDir: resolve(crewDir), statePath: resolve(statePath) };
 }
 
 function bearerFrom(extra) {
@@ -86,8 +89,8 @@ export function createServer(ctx) {
         "Call get_started first: it explains what contributing means here and gives you the exact first calls. " +
         "The contract, in short: open every source yourself in this session, quote the sentence verbatim, date everything, never guess, never name a minor. " +
         "Work is leased so contributors do not duplicate each other (claim_task), and every finding is checked against its source and reviewed by a person before it enters the record (submit_finding). " +
-        "If the server refuses a finding you believe is correct, or a tool behaves differently from its description, call report_bug rather than working around it; if the server cannot read a source you could read, resubmit with source_text. " +
-        "If the design itself is in your way, a field the schema cannot express or a task that should exist, call request_feature. The crew improves from what its contributors hit. " +
+        "If the server refuses a finding you believe is correct, or a tool behaves differently from its description, call report_issue rather than working around it; if the server cannot read a source you could read, resubmit with source_text. " +
+        "report_issue takes bugs, feature requests and questions, and list_issues shows what is already filed. The crew improves from what its contributors hit. " +
         "Facts: quote only status 'verified' claims as fact; 'reported' ones only as 'according to <source>'.",
     }
   );
@@ -129,6 +132,7 @@ export function createServer(ctx) {
             "Whether they want their name on the record. Findings carry the human who ran the agent.",
           ],
           they_can_also: brief.other_ways ?? null,
+          what_happens_to_the_work: brief.what_happens_to_the_work ?? null,
         },
 
         // --- for you, the agent ---
@@ -141,9 +145,9 @@ export function createServer(ctx) {
           "6. A maintainer reviews. get_contributor shows your record.",
         ],
         if_something_breaks:
-          "Call report_bug, and attach the record that would not submit so the work is not lost. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted.",
+          "Call report_issue with kind 'bug', and put the record that would not submit in `context` so the work is not lost. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted.",
         if_something_is_missing:
-          "Call request_feature: a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources say. Describe what you were trying to do, not only what to build.",
+          "Call report_issue with kind 'feature': a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources say. Say what you were trying to do, not only what to build. Check list_issues first so the same thing is not filed twice.",
         good_first_moves: top.map((t) => ({ task: t.id, title: t.title, unit: t.unit ?? null, priority: t.priority ?? null, scopes: Array.isArray(t.scopes) ? t.scopes.slice(0, 20) : null })),
         read_the_values: "get_crew returns values.md in full. Contributions that conflict with it are declined, however well sourced.",
         links: { repo: crew.crew.repo ?? null, site: crew.crew.site ?? null, contact: crew.crew.contact ?? null },
@@ -433,136 +437,135 @@ export function createServer(ctx) {
     }
   );
 
-  server.registerTool(
-    "report_bug",
-    {
-      title: "Report a bug or a blocker",
-      description:
-        "Tell the maintainers that something on the server side is wrong or is blocking you: a check that refuses a correct finding, a tool that behaves differently from its description, a schema that cannot express what the source says, a source the server cannot read. " +
-        "Use it instead of working around the problem silently, and instead of asking your human to patch data by hand. Include what you were doing and what you expected.",
-      inputSchema: {
-        summary: z.string().trim().min(10).max(200).describe("One line: what is broken"),
-        detail: z.string().trim().min(20).describe("What you did, what happened, what you expected. Include the exact tool call and the exact error text."),
-        tool: z.string().trim().optional().describe("The tool involved, e.g. submit_finding"),
-        task: z.string().trim().optional().describe("Task id, if the bug happened inside one"),
-        scope: z.string().trim().optional().describe("Scope you were working, e.g. TX"),
-        blocking: z.boolean().optional().describe("True if you cannot complete the work at all because of this"),
-        agent: z.string().trim().optional().describe("Your name and model"),
-        human: z.string().trim().optional().describe("The person running you"),
-        record: z.record(z.string(), z.unknown()).optional().describe("The record you were trying to submit, if any, so the work is not lost"),
-      },
-    },
-    async (a) => {
-      const bug = {
-        id: newId("bug"),
-        summary: a.summary,
-        detail: a.detail,
-        tool: a.tool ?? null,
-        task: a.task ?? null,
-        scope: a.scope ?? null,
-        blocking: a.blocking ?? false,
-        agent: a.agent ?? null,
-        human: a.human ?? null,
-        record: a.record ?? null,
-        server_version: VERSION,
-        protocol: PROTOCOL,
-        status: "open",
-        at: new Date().toISOString(),
-      };
-      store.addBug(bug);
-      return text({
-        id: bug.id,
-        status: "open",
-        thanks: "Logged. A maintainer sees this with list_bugs.",
-        next: a.record
-          ? "Your record was saved with the report, so the work is not lost even though the finding was refused."
-          : "If you had a record that would not submit, call report_bug again with it in `record` so the work is not lost.",
-        workaround: a.tool === "submit_finding" ? "If the server could not read a source you could read: resubmit with `source_text` set to the text you extracted from it." : null,
-      });
+  // ---- feedback: bugs, feature requests and questions in one queue ----
+  const issuesDir = ctx.issuesDir;
+  const ghToken = () => ctx.githubToken?.() ?? null;
+
+  const fileIssue = async (a, kindDefault) => {
+    const kind = a.kind ?? kindDefault;
+    const title = String(a.title ?? a.summary ?? "").trim();
+    const body = String(a.body ?? a.detail ?? a.problem ?? "").trim();
+    if (!title) return fail("An issue needs a title.");
+    if (body.length < 20) return fail("Say what happened and what you expected; twenty characters is not enough for anyone to act on.");
+
+    const existing = store.state.issues ?? [];
+    if (!a.confirm_new) {
+      const dup = findDuplicate(existing, title, kind);
+      if (dup) {
+        return text({
+          duplicate_of: { id: dup.issue.id, kind: dup.issue.kind, title: dup.issue.title, status: dup.issue.status, created_at: dup.issue.created_at, url: dup.issue.url ?? null },
+          similarity: dup.score,
+          nothing_was_filed: true,
+          next: "If this is the same thing, reference that id in your finding's notes and carry on. If it is genuinely different, call again with confirm_new: true and a title that says how it differs.",
+        });
+      }
     }
-  );
+
+    const now = new Date().toISOString();
+    const issue = {
+      id: newId("issue"),
+      kind,
+      title: title.slice(0, 120),
+      body,
+      status: "open",
+      agent: a.agent ?? null,
+      human: a.human ?? null,
+      context: a.context ?? null,
+      server_version: VERSION,
+      protocol: PROTOCOL,
+      created_at: now,
+      url: null,
+    };
+    // context is auto-filled from the lease when the agent gives one
+    if (a.lease_id) {
+      const l = store.findLease(a.lease_id);
+      if (l) issue.context = { lease_id: l.id, task: l.task, scope: l.scope, ...(issue.context ?? {}) , agent: issue.agent ?? l.agent, human: issue.human ?? l.human };
+      issue.agent ??= l?.agent ?? null;
+      issue.human ??= l?.human ?? null;
+    }
+    issue.url = await syncToGitHub(issue, { repo: crew.crew.repo, token: ghToken(), fetchImpl: ctx.fetchImpl });
+    const file = writeIssueFile(issuesDir, issue);
+    store.addIssue(issue);
+    return text({
+      id: issue.id,
+      kind: issue.kind,
+      status: issue.status,
+      url: issue.url,
+      open_it_yourself: issue.url ? null : manualIssueUrl(crew.crew.repo, issue),
+      written_to: file,
+      thanks: "Filed. A maintainer sees it with list_issues.",
+      next: "Reference this id in the notes of any finding it affected, then carry on with the work.",
+    });
+  };
 
   server.registerTool(
-    "list_bugs",
+    "report_issue",
     {
-      title: "List reported bugs",
-      description: "Bug reports from contributors, newest last. Maintainer view: pass the maintainer token to see the attached records.",
-      inputSchema: { open_only: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional(), token: z.string().optional() },
+      title: "File a bug, a feature request or a question",
+      description:
+        "The one place to tell the maintainers something. kind 'bug' when something is broken: a check that refuses a correct finding, a tool that behaves differently from its description, a source the server cannot read. " +
+        "kind 'feature' when the design is in your way: a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources say. One capability per report, with a concrete example from the run that prompted it. " +
+        "kind 'question' when the contract or a vocabulary is ambiguous and guessing would put something wrong in the record. " +
+        "Near-duplicate titles are returned rather than filed again, so check the answer before assuming you filed something new.",
+      inputSchema: {
+        kind: z.enum(KINDS).describe("bug, feature or question"),
+        title: z.string().trim().min(8).max(120).describe("One line"),
+        body: z.string().trim().min(20).describe("What you did, what happened, what you expected. For a feature: what you were trying to do and what stopped you, before what to build."),
+        lease_id: z.string().trim().optional().describe("Your lease, if you have one; task, scope, agent and human are filled in from it"),
+        context: z.record(z.string(), z.unknown()).optional().describe("Anything else a maintainer needs: the failing tool call, the exact error, the record that would not submit"),
+        agent: z.string().trim().optional(),
+        human: z.string().trim().optional(),
+        confirm_new: z.boolean().optional().describe("Set true to file anyway after a duplicate was returned"),
+      },
     },
-    async ({ open_only = true, limit = 50, token }, extra) => {
-      const rows = (store.state.bugs ?? []).filter((b) => (open_only ? b.status === "open" : true));
-      const expected = ctx.maintainerToken();
-      const given = token ?? bearerFrom(extra);
-      const authorised = Boolean(expected && given && given === expected);
-      return text({
-        count: rows.length,
-        bugs: rows.slice(-limit).map((b) => (authorised ? b : { ...b, record: b.record ? "(maintainer token required)" : null })),
-      });
-    }
+    async (a) => fileIssue(a, "bug")
+  );
+
+  // Kept so skills written against the earlier names keep working.
+  server.registerTool(
+    "report_bug",
+    { title: "File a bug (alias of report_issue)", description: "Alias of report_issue with kind 'bug'. Prefer report_issue.", inputSchema: { summary: z.string().trim().min(8).max(120), detail: z.string().trim().min(20), tool: z.string().trim().optional(), task: z.string().trim().optional(), scope: z.string().trim().optional(), blocking: z.boolean().optional(), agent: z.string().trim().optional(), human: z.string().trim().optional(), record: z.record(z.string(), z.unknown()).optional(), lease_id: z.string().trim().optional(), confirm_new: z.boolean().optional() } },
+    async (a) => fileIssue({ ...a, title: a.summary, body: a.detail, context: { tool: a.tool ?? null, task: a.task ?? null, scope: a.scope ?? null, blocking: a.blocking ?? false, record: a.record ?? null } }, "bug")
   );
 
   server.registerTool(
     "request_feature",
+    { title: "Request a feature (alias of report_issue)", description: "Alias of report_issue with kind 'feature'. Prefer report_issue.", inputSchema: { summary: z.string().trim().min(8).max(120), problem: z.string().trim().min(20), proposal: z.string().trim().optional(), tool: z.string().trim().optional(), task: z.string().trim().optional(), scope: z.string().trim().optional(), frequency: z.enum(["once", "occasionally", "most records", "every record"]).optional(), agent: z.string().trim().optional(), human: z.string().trim().optional(), lease_id: z.string().trim().optional(), confirm_new: z.boolean().optional() } },
+    async (a) => fileIssue({ ...a, title: a.summary, body: a.proposal ? `${a.problem}\n\nProposed: ${a.proposal}` : a.problem, context: { tool: a.tool ?? null, task: a.task ?? null, scope: a.scope ?? null, frequency: a.frequency ?? null } }, "feature")
+  );
+
+  server.registerTool(
+    "list_issues",
     {
-      title: "Request a feature or a change",
-      description:
-        "Ask the maintainers for something the crew does not have yet: a field the schema cannot express, a task that should exist, a tool that would save a dozen calls, a vocabulary that does not fit what the sources actually say. " +
-        "Use it when the server works as designed but the design is in your way. Use report_bug instead when something is broken. " +
-        "Say what you were trying to do and what you could not do, not just what to build; the maintainers can usually see a cheaper way once they know the goal.",
-      inputSchema: {
-        summary: z.string().trim().min(10).max(200).describe("One line: what you want"),
-        problem: z.string().trim().min(20).describe("What you were trying to do, and what stopped you or made it clumsy. Be concrete: the district, the document, the field."),
-        proposal: z.string().trim().optional().describe("What you think would fix it, if you have a view. Optional; the problem matters more."),
-        tool: z.string().trim().optional().describe("The tool or schema this would change"),
-        task: z.string().trim().optional().describe("Task id this came up in"),
-        scope: z.string().trim().optional().describe("Scope you were working, e.g. TX"),
-        frequency: z.enum(["once", "occasionally", "most records", "every record"]).optional().describe("How often you hit this"),
-        agent: z.string().trim().optional().describe("Your name and model"),
-        human: z.string().trim().optional().describe("The person running you"),
-      },
+      title: "List issues",
+      description: "The feedback queue: bugs, feature requests and questions, newest last. Check it before filing, so the same thing is not reported twice.",
+      inputSchema: { kind: z.enum(KINDS).optional(), status: z.enum(STATUSES).optional(), limit: z.number().int().min(1).max(200).optional(), full: z.boolean().optional().describe("Include the body and context") },
     },
-    async (a) => {
-      const req = {
-        id: newId("req"),
-        summary: a.summary,
-        problem: a.problem,
-        proposal: a.proposal ?? null,
-        tool: a.tool ?? null,
-        task: a.task ?? null,
-        scope: a.scope ?? null,
-        frequency: a.frequency ?? null,
-        agent: a.agent ?? null,
-        human: a.human ?? null,
-        server_version: VERSION,
-        protocol: PROTOCOL,
-        status: "open",
-        at: new Date().toISOString(),
-      };
-      store.addRequest(req);
-      const repo = crew.crew.repo;
-      const issue = repo && /github\.com/.test(repo)
-        ? `${repo.replace(/\/$/, "")}/issues/new?title=${encodeURIComponent("[request] " + a.summary)}&body=${encodeURIComponent(`${a.problem}\n\n${a.proposal ? "Proposed: " + a.proposal + "\n\n" : ""}Raised through the Ground Crew server by ${a.agent ?? "an agent"}${a.human ? ` for ${a.human}` : ""}${a.tool ? `, about ${a.tool}` : ""}${a.frequency ? `, hit ${a.frequency}` : ""}.`)}`
-        : null;
+    async ({ kind, status = "open", limit = 50, full = false }) => {
+      const rows = (store.state.issues ?? []).filter((i) => (!kind || i.kind === kind) && (!status || i.status === status));
       return text({
-        id: req.id,
-        status: "open",
-        thanks: "Logged. A maintainer sees this with list_requests.",
-        open_it_yourself: issue,
-        next: "Carry on with the work if you can. If this blocks you entirely, call report_bug with blocking set to true and attach the record that would not submit.",
+        count: rows.length,
+        issues: rows.slice(-limit).map((i) => (full ? i : { id: i.id, kind: i.kind, title: i.title, status: i.status, created_at: i.created_at, url: i.url ?? null })),
       });
     }
   );
 
   server.registerTool(
-    "list_requests",
+    "triage_issue",
     {
-      title: "List feature requests",
-      description: "Feature requests from contributors, newest last, with how often each one was hit. Maintainer triage view.",
-      inputSchema: { open_only: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() },
+      title: "Triage an issue",
+      description: `Set an issue's status. Requires the crew's maintainer token (${ctx.tokenEnv}), as \`token\` or an Authorization: Bearer header.`,
+      inputSchema: { id: z.string(), status: z.enum(STATUSES), note: z.string().trim().optional(), token: z.string().optional() },
     },
-    async ({ open_only = true, limit = 50 }) => {
-      const rows = (store.state.requests ?? []).filter((r) => (open_only ? r.status === "open" : true));
-      return text({ count: rows.length, requests: rows.slice(-limit) });
+    async ({ id, status, note, token }, extra) => {
+      const expected = ctx.maintainerToken();
+      if (!expected) return fail(`This server has no maintainer token configured (set ${ctx.tokenEnv}); triage_issue is disabled.`);
+      const given = token ?? bearerFrom(extra);
+      if (!given || given !== expected) return fail("Wrong or missing maintainer token.");
+      const updated = store.updateIssue(id, { status, triage_note: note ?? null, triaged_at: new Date().toISOString() });
+      if (!updated) return fail(`No issue '${id}'.`);
+      writeIssueFile(issuesDir, updated);
+      return text({ id, status, note: note ?? null });
     }
   );
 

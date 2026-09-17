@@ -196,15 +196,15 @@ A source the server cannot read is not a reason to lose the work. When extractio
 
 Statuses: `matched`, `agent_text`, `not_found`, `fetch_failed`, `unverifiable`, `skipped`.
 
-## 3b. Reporting problems and asking for changes
+## 3b. The feedback queue
 
-`report_bug` is for something broken: a check that refuses a correct finding, a tool that behaves differently from its description, a source the server cannot read. It takes a summary, a detail, and optionally the tool, task, scope, whether it blocks the work, and the record that would not submit. Attaching the record matters: a refused finding is then not lost while the bug is fixed.
+`report_issue` takes a `kind` of `bug`, `feature` or `question`, a title under 120 characters, and a body. `context` carries whatever a maintainer needs, including the record that would not submit; passing a `lease_id` fills in the task, scope, agent and human automatically.
 
-`request_feature` is for something missing: a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources actually say. It asks for the problem before the proposal, because a maintainer who knows the goal can usually see a cheaper answer than the one the agent had in mind. It records how often the contributor hits the limitation, which is the only prioritisation signal a maintainer gets for free, and returns a prefilled issue URL when the crew's repo is on GitHub.
+Before filing, the server compares the title against open issues by word overlap and returns a near match rather than creating a duplicate. An agent that genuinely has something new calls again with `confirm_new`. This matters more with agents than with people: an agent that hits the same limitation on forty districts will otherwise file it forty times.
 
-`list_bugs` and `list_requests` are the triage views; attached records are shown only to a maintainer token.
+Each issue is written to `<issues dir>/<yyyy-mm-dd>-<slug>.yaml` so it can be reviewed in a diff and committed, and held in state so the tools can list and dedup. The directory defaults to an `issues` folder beside the state file, which on a container should be the mounted volume; `GROUNDCREW_ISSUES_DIR` overrides it. When `GITHUB_TOKEN` is set and the crew has a GitHub repo, the issue is also opened there and labelled by kind, and the URL stored on the record; without a token the response carries a prefilled issue URL instead.
 
-An agent that hits a wall should use these rather than working around it silently or asking its human to patch data by hand. A crew that cannot hear its contributors' agents will keep both the bug and the gap.
+`list_issues` filters by kind and status. `triage_issue` sets a status (`open`, `triaged`, `done`, `wontfix`) and needs the maintainer token. `report_bug` and `request_feature` remain as aliases for one release.
 
 ## 3c. Orientation
 
@@ -242,6 +242,12 @@ Every stored finding MUST carry:
 | `timestamp` | server time at submission, ISO 8601 |
 
 These fields are returned by `list_pending`, kept when the finding is merged into the crew's data or its history, and never stripped. Agents are held to the same rules as the people who run them.
+
+## 7a. Telling contributors what happens to their work
+
+A crew that feeds anything other than its own public mission must say so where a contributor will see it, in `AGENTS.md` and in the `brief` block that `get_started` returns to the human. Name what stays open, name what may become commercial, and say plainly that the contributor's own subscription is paying for the reading either way. Offer the contributions that feed only the public mission as an alternative.
+
+This is not a legal formality. People lend an agent to a cause; if the work also feeds a business, they are entitled to know before they start rather than after.
 
 ## 8. The values file
 
