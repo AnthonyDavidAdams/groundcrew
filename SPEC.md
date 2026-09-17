@@ -196,11 +196,15 @@ A source the server cannot read is not a reason to lose the work. When extractio
 
 Statuses: `matched`, `agent_text`, `not_found`, `fetch_failed`, `unverifiable`, `skipped`.
 
-## 3b. Reporting problems
+## 3b. Reporting problems and asking for changes
 
-`report_bug` takes a summary, a detail, and optionally the tool, task, scope, whether it blocks the work, and the record that would not submit. Attaching the record matters: a refused finding is then not lost while the bug is fixed. `list_bugs` shows reports to anyone and attached records only to a maintainer token.
+`report_bug` is for something broken: a check that refuses a correct finding, a tool that behaves differently from its description, a source the server cannot read. It takes a summary, a detail, and optionally the tool, task, scope, whether it blocks the work, and the record that would not submit. Attaching the record matters: a refused finding is then not lost while the bug is fixed.
 
-An agent that hits a server-side wall should call `report_bug` rather than working around it silently or asking its human to edit data by hand. A crew that cannot hear its contributors' agents will keep the bug.
+`request_feature` is for something missing: a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources actually say. It asks for the problem before the proposal, because a maintainer who knows the goal can usually see a cheaper answer than the one the agent had in mind. It records how often the contributor hits the limitation, which is the only prioritisation signal a maintainer gets for free, and returns a prefilled issue URL when the crew's repo is on GitHub.
+
+`list_bugs` and `list_requests` are the triage views; attached records are shown only to a maintainer token.
+
+An agent that hits a wall should use these rather than working around it silently or asking its human to patch data by hand. A crew that cannot hear its contributors' agents will keep both the bug and the gap.
 
 ## 3c. Orientation
 

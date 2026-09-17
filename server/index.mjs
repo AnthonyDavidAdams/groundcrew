@@ -84,6 +84,7 @@ export function createServer(ctx) {
         "The contract, in short: open every source yourself in this session, quote the sentence verbatim, date everything, never guess, never name a minor. " +
         "Work is leased so contributors do not duplicate each other (claim_task), and every finding is checked against its source and reviewed by a person before it enters the record (submit_finding). " +
         "If the server refuses a finding you believe is correct, or a tool behaves differently from its description, call report_bug rather than working around it; if the server cannot read a source you could read, resubmit with source_text. " +
+        "If the design itself is in your way, a field the schema cannot express or a task that should exist, call request_feature. The crew improves from what its contributors hit. " +
         "Facts: quote only status 'verified' claims as fact; 'reported' ones only as 'according to <source>'.",
     }
   );
@@ -138,6 +139,8 @@ export function createServer(ctx) {
         ],
         if_something_breaks:
           "Call report_bug, and attach the record that would not submit so the work is not lost. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted.",
+        if_something_is_missing:
+          "Call request_feature: a field the schema cannot express, a task that should exist, a vocabulary that does not fit what the sources say. Describe what you were trying to do, not only what to build.",
         good_first_moves: top.map((t) => ({ task: t.id, title: t.title, unit: t.unit ?? null, priority: t.priority ?? null, scopes: Array.isArray(t.scopes) ? t.scopes.slice(0, 20) : null })),
         read_the_values: "get_crew returns values.md in full. Contributions that conflict with it are declined, however well sourced.",
         links: { repo: crew.crew.repo ?? null, site: crew.crew.site ?? null, contact: crew.crew.contact ?? null },
@@ -492,6 +495,71 @@ export function createServer(ctx) {
         count: rows.length,
         bugs: rows.slice(-limit).map((b) => (authorised ? b : { ...b, record: b.record ? "(maintainer token required)" : null })),
       });
+    }
+  );
+
+  server.registerTool(
+    "request_feature",
+    {
+      title: "Request a feature or a change",
+      description:
+        "Ask the maintainers for something the crew does not have yet: a field the schema cannot express, a task that should exist, a tool that would save a dozen calls, a vocabulary that does not fit what the sources actually say. " +
+        "Use it when the server works as designed but the design is in your way. Use report_bug instead when something is broken. " +
+        "Say what you were trying to do and what you could not do, not just what to build; the maintainers can usually see a cheaper way once they know the goal.",
+      inputSchema: {
+        summary: z.string().trim().min(10).max(200).describe("One line: what you want"),
+        problem: z.string().trim().min(20).describe("What you were trying to do, and what stopped you or made it clumsy. Be concrete: the district, the document, the field."),
+        proposal: z.string().trim().optional().describe("What you think would fix it, if you have a view. Optional; the problem matters more."),
+        tool: z.string().trim().optional().describe("The tool or schema this would change"),
+        task: z.string().trim().optional().describe("Task id this came up in"),
+        scope: z.string().trim().optional().describe("Scope you were working, e.g. TX"),
+        frequency: z.enum(["once", "occasionally", "most records", "every record"]).optional().describe("How often you hit this"),
+        agent: z.string().trim().optional().describe("Your name and model"),
+        human: z.string().trim().optional().describe("The person running you"),
+      },
+    },
+    async (a) => {
+      const req = {
+        id: newId("req"),
+        summary: a.summary,
+        problem: a.problem,
+        proposal: a.proposal ?? null,
+        tool: a.tool ?? null,
+        task: a.task ?? null,
+        scope: a.scope ?? null,
+        frequency: a.frequency ?? null,
+        agent: a.agent ?? null,
+        human: a.human ?? null,
+        server_version: VERSION,
+        protocol: PROTOCOL,
+        status: "open",
+        at: new Date().toISOString(),
+      };
+      store.addRequest(req);
+      const repo = crew.crew.repo;
+      const issue = repo && /github\.com/.test(repo)
+        ? `${repo.replace(/\/$/, "")}/issues/new?title=${encodeURIComponent("[request] " + a.summary)}&body=${encodeURIComponent(`${a.problem}\n\n${a.proposal ? "Proposed: " + a.proposal + "\n\n" : ""}Raised through the Ground Crew server by ${a.agent ?? "an agent"}${a.human ? ` for ${a.human}` : ""}${a.tool ? `, about ${a.tool}` : ""}${a.frequency ? `, hit ${a.frequency}` : ""}.`)}`
+        : null;
+      return text({
+        id: req.id,
+        status: "open",
+        thanks: "Logged. A maintainer sees this with list_requests.",
+        open_it_yourself: issue,
+        next: "Carry on with the work if you can. If this blocks you entirely, call report_bug with blocking set to true and attach the record that would not submit.",
+      });
+    }
+  );
+
+  server.registerTool(
+    "list_requests",
+    {
+      title: "List feature requests",
+      description: "Feature requests from contributors, newest last, with how often each one was hit. Maintainer triage view.",
+      inputSchema: { open_only: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() },
+    },
+    async ({ open_only = true, limit = 50 }) => {
+      const rows = (store.state.requests ?? []).filter((r) => (open_only ? r.status === "open" : true));
+      return text({ count: rows.length, requests: rows.slice(-limit) });
     }
   );
 
