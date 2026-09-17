@@ -12,7 +12,7 @@ export function newId(prefix) {
 }
 
 export function emptyState() {
-  return { version: 1, leases: [], findings: [], issues: [], bugs: [], requests: [] };
+  return { version: 1, leases: [], findings: [], issues: [], fetches: [], bugs: [], requests: [] };
 }
 
 export class StateStore {
@@ -96,6 +96,13 @@ export class StateStore {
   }
 
   // ---- findings ----
+  logFetch(entry) {
+    const f = (this.state.fetches ||= []);
+    f.push(entry);
+    if (f.length > 5000) f.splice(0, f.length - 5000);
+    this.save();
+  }
+
   addIssue(issue) {
     (this.state.issues ||= []).push(issue);
     this.save();

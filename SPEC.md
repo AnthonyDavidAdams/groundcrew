@@ -188,6 +188,12 @@ A crew supplies its own identity, so a connector list shows the crew rather than
 
 These map to the MCP `serverInfo` fields `title`, `description`, `websiteUrl` and `icons`. Icon `src` must be an absolute http or https URL; anything else is dropped rather than passed through. Supply several sizes, and remember that a wordmark that reads at 512 pixels will be a smudge at 48: use the mark alone for the small sizes.
 
+## 2.6 Documents and crew tools
+
+`fetch_document` downloads a document once, extracts its text on the server, and returns only the passages matching the caller's terms with page numbers and context, plus a detected table of contents, or a named page range. The extraction is cached by URL with its SHA-256, byte size, content type and fetch time, held under one lock per URL so parallel agents share a single download, and it is the copy `submit_finding` checks a quote against, so a contributor is verified against the text they read. A Wayback save is fired without blocking. Documents over 25 MB are refused; a PDF yielding under 200 characters a page comes back with `needs_ocr`, which is the signal to read it by hand and submit with `source_text`. A crew sets its default search terms with `document_terms` in `crew.json`.
+
+Anything specific to one problem domain belongs to the crew, not the engine. A crew may put a `tools.mjs` in its directory exporting `registerTools(server, ctx, helpers)`; the server loads it at startup and the tools appear alongside the built-in ones. The campaign that prompted this uses it for two: finding a school district's handbook across the six vendors that host most of them, and reading Texas board policy, which serves text to a browser and refuses a plain fetch. Neither belongs in an engine that is meant to work for any public problem.
+
 ## 3a. Source verification
 
 `submit_finding` fetches `source` and requires the first 120 characters of the normalized `quote` to appear in the extracted text. HTML is reduced to text; PDFs are parsed with a pure-JS extractor, falling back to reading uncompressed text operators.

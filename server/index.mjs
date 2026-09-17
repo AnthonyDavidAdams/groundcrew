@@ -11,10 +11,12 @@
 //   GROUNDCREW_LEASE_TTL_HOURS         lease length, default 4 (crew.json lease_ttl_hours also works)
 //   PORT, HOST                          HTTP bind when --port/--host are not given
 
+import { existsSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
+import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -53,7 +55,9 @@ export function createContext({ crewDir = process.env.GROUNDCREW_CREW ?? "./crew
   const autoMerge = { enabled: false, min_approved: 10, min_approval_rate: 0.9, ...(crew.crew.auto_merge ?? {}) };
   const issuesDir = env.GROUNDCREW_ISSUES_DIR || join(dirname(resolve(statePath)), "issues");
   const githubToken = () => env.GITHUB_TOKEN || null;
-  return { crew, store, validatorFor, maintainerToken, githubToken, tokenEnv, ttlHours, autoMerge, fetchImpl, issuesDir, crewDir: resolve(crewDir), statePath: resolve(statePath) };
+  const docsDir = env.GROUNDCREW_DOCS_DIR || join(dirname(resolve(statePath)), "documents");
+  const documents = new DocumentCache({ dir: docsDir, fetchImpl });
+  return { crew, store, validatorFor, maintainerToken, githubToken, tokenEnv, ttlHours, autoMerge, fetchImpl, issuesDir, documents, docsDir, crewDir: resolve(crewDir), statePath: resolve(statePath) };
 }
 
 function bearerFrom(extra) {
@@ -437,6 +441,72 @@ export function createServer(ctx) {
     }
   );
 
+  // ---- documents ----
+  server.registerTool(
+    "fetch_document",
+    {
+      title: "Read a document without loading it",
+      description:
+        "Download a document once, extract its text on the server, and return only what you asked for: the passages matching your terms, with page numbers and surrounding context, plus the table of contents. " +
+        "Use this instead of pulling a whole handbook into your context. The extracted copy is cached and is the same copy submit_finding checks your quote against, so you are verified against the text you actually read. " +
+        "PDFs, HTML and plain text; up to 25 MB. A scanned PDF comes back with needs_ocr true and no text, which is when you read it yourself and submit with source_text.",
+      inputSchema: {
+        url: z.string().url().describe("The document. Must be the file or page itself, not a landing page."),
+        terms: z.array(z.string().min(2)).optional().describe("What to look for. Defaults to the crew's document_terms."),
+        pages: z.string().regex(/^\d+(-\d+)?$/).optional().describe("Return this page or range in full, e.g. '12' or '12-18', instead of term hits"),
+        context_words: z.number().int().min(20).max(1200).optional().describe("Roughly how many words around each hit (default 300)"),
+        toc: z.boolean().optional().describe("Include the detected table of contents (default true)"),
+        archive: z.boolean().optional().describe("Fire a Wayback save; does not block (default true)"),
+        refresh: z.boolean().optional().describe("Re-download even if cached"),
+        lease_id: z.string().optional().describe("Your lease, so the fetch is logged against the work"),
+      },
+    },
+    async ({ url, terms, pages, context_words = 300, toc = true, archive: doArchive = true, refresh = false, lease_id }) => {
+      let doc;
+      try {
+        doc = await ctx.documents.get(url, { refresh });
+      } catch (err) {
+        return fail(`Could not read the document: ${err.message}`, { url, next: "If you can read it yourself, submit with source_text and it will be flagged for a human." });
+      }
+      const lease = lease_id ? store.findLease(lease_id) : null;
+      store.logFetch?.({ url, sha256: doc.sha256, bytes: doc.bytes, pages: doc.page_count, at: new Date().toISOString(), agent: lease?.agent ?? null, human: lease?.human ?? null, lease_id: lease?.id ?? null });
+
+      let archived = null;
+      if (doArchive && !doc.cached) archive(url, ctx.fetchImpl).then((u) => { if (u) { doc.archived_url = u; ctx.documents.write(url, doc); } });
+
+      const out = {
+        url: doc.url,
+        final_url: doc.final_url,
+        sha256: doc.sha256,
+        bytes: doc.bytes,
+        content_type: doc.content_type,
+        page_count: doc.page_count,
+        fetched_at: doc.fetched_at,
+        cached: doc.cached,
+        extracted_by: doc.extracted_by,
+        needs_ocr: doc.needs_ocr,
+        archived_url: doc.archived_url ?? null,
+        text_chars: (doc.text ?? "").length,
+      };
+      if (doc.needs_ocr) {
+        out.warning = "No usable text layer; this is probably a scan. Read it yourself and submit with source_text.";
+        return text(out);
+      }
+      if (pages) {
+        const [a, b] = pages.split("-").map(Number);
+        out.pages = pages;
+        out.text = pageRange(doc, a, b ?? a);
+      } else {
+        const useTerms = terms?.length ? terms : (crew.crew.document_terms ?? ["policy"]);
+        out.terms = useTerms;
+        out.hits = searchDoc(doc, useTerms, { words: context_words });
+        if (!out.hits.length) out.next = "Nothing matched. Try other wording, read the table of contents, or ask for a page range.";
+      }
+      if (toc) out.table_of_contents = tableOfContents(doc);
+      return text(out);
+    }
+  );
+
   // ---- feedback: bugs, feature requests and questions in one queue ----
   const issuesDir = ctx.issuesDir;
   const ghToken = () => ctx.githubToken?.() ?? null;
@@ -641,6 +711,23 @@ export function createServer(ctx) {
   return server;
 }
 
+// A crew may add its own tools by putting a tools.mjs in its directory that exports
+// `registerTools(server, ctx, helpers)`. Anything specific to one problem domain belongs there,
+// not in the engine.
+export async function loadCrewTools(server, ctx) {
+  const file = join(ctx.crewDir, "tools.mjs");
+  if (!existsSync(file)) return [];
+  try {
+    const mod = await import(pathToFileURL(file).href);
+    if (typeof mod.registerTools !== "function") return [];
+    const names = await mod.registerTools(server, ctx, { z, text, fail, documents: ctx.documents, searchDoc, tableOfContents, pageRange });
+    return Array.isArray(names) ? names : [];
+  } catch (err) {
+    console.error(`crew tools.mjs failed to load: ${err.message}`);
+    return [];
+  }
+}
+
 function skillLabel(t) {
   if (!t.skill) return "unspecified";
   const b = basename(t.skill, ".md");
@@ -670,6 +757,7 @@ function arg(argv, name, fallback) {
 
 export async function runStdio(ctx) {
   const server = createServer(ctx);
+  await loadCrewTools(server, ctx);
   await server.connect(new StdioServerTransport());
   console.error(`groundcrew ${VERSION} on stdio: ${ctx.crew.name} (${ctx.crewDir}; ${ctx.crew.claims.length} claims, ${ctx.crew.tasks.length} tasks; state ${ctx.statePath})`);
   return server;
@@ -702,6 +790,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");
     const server = createServer(ctx);
+  await loadCrewTools(server, ctx);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     try {
