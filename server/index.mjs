@@ -16,6 +16,7 @@ import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
+import { buildActivity } from "./activity.mjs";
 import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -873,8 +874,21 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
         pending: ctx.store.state.findings.filter((f) => f.status === "pending").length,
       });
     }
+    // The public feed. Readable by anyone, including a browser on the crew's own website, which is
+    // why it is the only route that sets CORS and the only one that never sees a token.
+    if (url.pathname === "/activity.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=20" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" }); return res.end(); }
+      if (req.method !== "GET") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET only" })); }
+      const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
+      let body;
+      try { body = buildActivity(ctx, { limit }); }
+      catch (err) { res.writeHead(500, headers); return res.end(JSON.stringify({ error: err.message })); }
+      res.writeHead(200, headers);
+      return res.end(JSON.stringify(body));
+    }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");
