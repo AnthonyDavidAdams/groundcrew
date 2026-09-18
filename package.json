@@ -1,6 +1,6 @@
 {
   "name": "@earthpilot/groundcrew",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Ground Crew: an open protocol and reference MCP server for pointing many people's AI agents at one public problem. Part of EarthPilot, mission support for Spaceship Earth.",
   "license": "MIT",
   "type": "module",

@@ -8,11 +8,11 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { normalizeText, htmlToText } from "./verify.mjs";
+import { normalizeText, htmlToText, USER_AGENT } from "./verify.mjs";
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_MS = 45_000;
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 groundcrew/0.2";
+const UA = USER_AGENT;
 
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 const urlKey = (u) => createHash("sha1").update(String(u)).digest("hex").slice(0, 20);

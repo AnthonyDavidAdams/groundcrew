@@ -1,6 +1,13 @@
 // Source verification for findings: fetch `source`, reduce it to text, and require the first 120 characters
 // of the normalized `quote` to appear in the normalized text. See SPEC.md, "Validation rules".
 
+// One user agent for every outbound request this server makes. It has to start with a real browser
+// string: pol.tasb.org answers 403 to a bare bot token and 200 to this, and when the verifier could
+// not read a source the crew tool could, every Texas finding landed as unverified agent text and went
+// to a human who did not need to see it. The project and repo are appended so we stay identifiable.
+export const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 groundcrew/0.4 (+https://github.com/AnthonyDavidAdams/groundcrew)";
+
 export const QUOTE_PREFIX_CHARS = 120;
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 export const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
@@ -41,7 +48,7 @@ export function quoteAppears(quote, text) {
   return normalizeText(text).includes(needle);
 }
 
-export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, fetchImpl = fetch, userAgent = "groundcrew/0.1 (+https://github.com/earthpilot/groundcrew)" } = {}) {
+export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, fetchImpl = fetch, userAgent = USER_AGENT } = {}) {
   const u = new URL(url);
   if (!/^https?:$/.test(u.protocol)) throw new Error(`source must be http(s), got ${u.protocol}`);
   const ac = new AbortController();
