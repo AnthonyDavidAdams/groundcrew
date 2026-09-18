@@ -40,7 +40,11 @@ const ago = (iso) => {
 // back into an address, because the address was never kept.
 const placeOf = (p) =>
   p && (p.city || p.region || p.country)
-    ? { city: p.city ?? null, region: p.region ?? null, country: p.country ?? null, country_code: p.country_code ?? null, label: p.label ?? [p.city, p.region, p.country_code || p.country].filter(Boolean).join(", ") }
+    ? {
+        city: p.city ?? null, region: p.region ?? null, country: p.country ?? null, country_code: p.country_code ?? null,
+        lat: Number.isFinite(p.lat) ? p.lat : null, lon: Number.isFinite(p.lon) ? p.lon : null,
+        label: p.label ?? [p.city, p.region, p.country_code || p.country].filter(Boolean).join(", "),
+      }
     : null;
 
 const subjectOf = (rec) => {
@@ -141,6 +145,13 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     scopes: [...scopes].sort(),
     events: recent,
     places: [...new Set(events.map((e) => e.place && e.place.label).filter(Boolean))].slice(0, 20),
+    map: {
+      tiles: "/tiles/{z}/{x}/{y}.png",
+      max_zoom: 12,
+      attribution: "© OpenStreetMap contributors",
+      attribution_url: "https://www.openstreetmap.org/copyright",
+      note: "Tiles are proxied and cached by this server so a visitor's browser never contacts a tile provider. Coordinates are rounded to one decimal place, roughly eleven kilometres.",
+    },
     note:
       "Contributors are shown as a short one-way hash of the email they gave; the address itself is never published. " +
       "Location is the city the contributor's connection resolved to when they claimed work, looked up once and stored as city, region and country. " +

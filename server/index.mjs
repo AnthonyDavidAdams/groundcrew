@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
 import { buildActivity } from "./activity.mjs";
 import { clientIp, lookup as lookupPlace } from "./geo.mjs";
+import { TileCache, validTile, ATTRIBUTION, ATTRIBUTION_URL } from "./tiles.mjs";
 import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -59,7 +60,9 @@ export function createContext({ crewDir = process.env.GROUNDCREW_CREW ?? "./crew
   const githubToken = () => env.GITHUB_TOKEN || null;
   const docsDir = env.GROUNDCREW_DOCS_DIR || join(dirname(resolve(statePath)), "documents");
   const documents = new DocumentCache({ dir: docsDir, fetchImpl });
-  return { crew, store, validatorFor, maintainerToken, githubToken, tokenEnv, ttlHours, autoMerge, fetchImpl, issuesDir, documents, docsDir, crewDir: resolve(crewDir), statePath: resolve(statePath) };
+  const tilesDir = env.GROUNDCREW_TILES_DIR || join(dirname(resolve(statePath)), "tiles");
+  const tiles = new TileCache({ dir: tilesDir, fetchImpl });
+  return { crew, store, validatorFor, maintainerToken, githubToken, tokenEnv, ttlHours, autoMerge, fetchImpl, issuesDir, documents, docsDir, tiles, tilesDir, crewDir: resolve(crewDir), statePath: resolve(statePath) };
 }
 
 function bearerFrom(extra) {
@@ -887,6 +890,30 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
         pending: ctx.store.state.findings.filter((f) => f.status === "pending").length,
       });
     }
+    // Map tiles, proxied and cached so a visitor's browser never contacts a tile server directly.
+    // Attribution to OpenStreetMap contributors is a condition of using these and is carried in the
+    // activity feed alongside the coordinates that reference them.
+    const tileMatch = url.pathname.match(/^\/tiles\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.png$/);
+    if (tileMatch) {
+      const [z, x, y] = tileMatch.slice(1).map(Number);
+      const headers = { "Access-Control-Allow-Origin": "*" };
+      if (!validTile(z, x, y)) { res.writeHead(400, { ...headers, "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "tile out of range" })); }
+      try {
+        const png = await ctx.tiles.get(z, x, y);
+        res.writeHead(200, {
+          ...headers,
+          "Content-Type": "image/png",
+          "Content-Length": png.length,
+          "Cache-Control": "public, max-age=2592000, immutable",
+          "X-Map-Attribution": ATTRIBUTION,
+        });
+        return res.end(png);
+      } catch (err) {
+        res.writeHead(502, { ...headers, "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: err.message }));
+      }
+    }
+
     // The public feed. Readable by anyone, including a browser on the crew's own website, which is
     // why it is the only route that sets CORS and the only one that never sees a token.
     if (url.pathname === "/activity.json") {
@@ -901,7 +928,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(JSON.stringify(body));
     }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");

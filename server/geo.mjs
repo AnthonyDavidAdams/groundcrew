@@ -33,6 +33,13 @@ export function clientIp(headers = {}) {
 const PRIVATE = /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd)/i;
 export const isRoutable = (ip) => Boolean(ip) && !PRIVATE.test(String(ip));
 
+// Coordinates are rounded to one decimal place, about eleven kilometres. That is deliberately
+// coarser than the lookup itself: city-level IP geolocation is typically good to somewhere between
+// five and fifty kilometres, so a finer number would be false precision as well as a larger
+// disclosure. It is enough to put a map square around the right town and no more.
+const COORD_DP = 1;
+const coarse = (n) => (Number.isFinite(n) ? Math.round(Number(n) * 10 ** COORD_DP) / 10 ** COORD_DP : null);
+
 function shape(j) {
   if (!j) return null;
   const city = j.city ?? j.cityName ?? null;
@@ -40,8 +47,10 @@ function shape(j) {
   const country = j.country ?? j.countryName ?? null;
   const code = j.country_code ?? j.countryCode ?? null;
   if (!city && !region && !country) return null;
+  const lat = coarse(j.latitude ?? j.lat);
+  const lon = coarse(j.longitude ?? j.lon ?? j.longitude);
   const label = [city, region, code || country].filter(Boolean).join(", ");
-  return { city: city || null, region: region || null, country: country || null, country_code: code || null, label };
+  return { city: city || null, region: region || null, country: country || null, country_code: code || null, lat, lon, label };
 }
 
 const SERVICES = [
