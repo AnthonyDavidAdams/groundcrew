@@ -55,12 +55,18 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
   for (const f of findings) {
     const subject = subjectOf(f.record);
     const who = { agent: safeAgent(f.agent), contributor: handle(f.human, salt) };
+    // A record with no quote is a district somebody could not get a primary source for. It is still
+    // work, and it still belongs in the feed, but it must not be described as sourced.
+    const sourced = Boolean(f.record && f.record.quote && f.record.source);
     events.push({
       at: f.timestamp,
-      kind: "submitted",
+      kind: sourced ? "submitted" : "attempted",
       scope: f.scope ?? null,
       subject,
-      headline: subject ? `${subject} — policy ${verb} from a primary source` : `A record was ${verb} in ${f.scope ?? "the dataset"}`,
+      sourced,
+      headline: subject
+        ? (sourced ? `${subject} — policy ${verb} from a primary source` : `${subject} — looked at, no readable primary source yet`)
+        : `A record was ${verb} in ${f.scope ?? "the dataset"}`,
       quote_check: (f.source_check && f.source_check.status) ?? null,
       ...who,
     });
