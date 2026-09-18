@@ -53,6 +53,30 @@ export class DocumentCache {
     } catch { return null; }
   }
 
+  // Store text the server obtained some other way — a vendor API, an OCR pass, a rendered page —
+  // under the URL a person would actually cite. A later submit_finding checks the quote against this
+  // copy, so a citation can point at a human-readable page that a plain fetch cannot read.
+  put(url, text, meta = {}) {
+    const body = String(text ?? "");
+    const doc = {
+      url,
+      final_url: meta.final_url ?? url,
+      sha256: sha256(Buffer.from(body)),
+      bytes: Buffer.byteLength(body),
+      content_type: meta.content_type ?? "text/plain",
+      fetched_at: new Date().toISOString(),
+      page_count: meta.page_count ?? 1,
+      extracted_by: meta.extracted_by ?? "api",
+      needs_ocr: false,
+      page_offsets: meta.page_offsets ?? [0],
+      ...meta,
+      text: body,
+      cached: false,
+    };
+    this.write(url, doc);
+    return doc;
+  }
+
   // Returns { url, final_url, sha256, bytes, content_type, fetched_at, page_count, text, page_offsets, needs_ocr, extracted_by, cached }
   async get(url, { refresh = false } = {}) {
     if (!refresh) {

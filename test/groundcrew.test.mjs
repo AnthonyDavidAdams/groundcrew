@@ -139,6 +139,8 @@ A test claim.
     arguments: { task: "record-scan", lease_id: lease.id, skill: "record-scan@test", record: { name: "Test County Schools", region: "MS", external_id: "test-0003", status: "allows", source: `${fixtureUrl}/policy-JDA`, quote: QUOTE, last_verified: "2026-09-10" } },
   }));
   assert.equal(good.status, "pending"); assert.equal(good.source_check.status, "matched");
+  assert.equal(good.quote_check, "server_fetch", JSON.stringify(good));
+  assert.ok(good.source_chars > 0, "source_chars is reported");
   assert.deepEqual(Object.keys(good.disclosure).sort(), ["agent", "human", "skill", "timestamp"]);
   assert.equal(good.disclosure.human, "tester@example.org");
   ok(`submit_finding with a quote found at the source -> pending (${good.id})`);
@@ -148,7 +150,13 @@ A test claim.
     arguments: { task: "record-scan", lease_id: lease.id, record: { name: "Other District", region: "MS", external_id: "test-0004", status: "bans", source: `${fixtureUrl}/policy-JDA`, quote: "Corporal punishment is prohibited in every school of this district.", last_verified: "2026-09-10" } },
   }));
   assert.ok(bad.includes("not_found"), bad);
-  ok("submit_finding with a quote not in the source is rejected");
+  // A rejection has to say what the server looked for, not only that it failed.
+  const badJson = JSON.parse(bad.slice(bad.indexOf("{")));
+  assert.equal(badJson.quote_check, "failed");
+  assert.ok(badJson.sought.startsWith("corporal punishment is prohibited"), badJson.sought);
+  assert.equal(typeof badJson.matched_chars, "number");
+  assert.ok(badJson.source_chars > 0);
+  ok("submit_finding with a quote not in the source is rejected, and says what it sought");
 
   const badSchema = errText(await client.callTool({ name: "submit_finding", arguments: { task: "record-scan", lease_id: lease.id, record: { name: "No status" } } }));
   assert.ok(badSchema.includes("does not match the schema"), badSchema);
@@ -191,6 +199,39 @@ A test claim.
   const prompt = await client.getPrompt({ name: "record-scan", arguments: { scope: "MS" } });
   assert.ok(prompt.messages[0].content.text.includes("# Record scan") && prompt.messages[0].content.text.includes("Scope: MS"));
   ok("prompts named after each task return the skill text");
+
+  // ---- every advertised tool has a handler ----
+  // A contributor reported a tool that the listing did not have; the reverse (a tool registered but
+  // named nowhere) is just as easy to ship. Call each one with no arguments: a schema complaint means
+  // the handler is there, "Tool X not found" means it is not.
+  const listed = (await client.listTools()).tools.map((t) => t.name).sort();
+  const missing = [];
+  for (const name of listed) {
+    const r = await client.callTool({ name, arguments: {} });
+    if (String(r.content?.[0]?.text ?? "").includes(`Tool ${name} not found`)) missing.push(name);
+  }
+  assert.deepEqual(missing, [], `advertised with no handler: ${missing.join(", ")}`);
+  assert.ok(listed.includes("list_bugs") && listed.includes("report_bug"), "report_bug and list_bugs come as a pair");
+  ok(`all ${listed.length} advertised tools have a handler`);
+
+  // ---- the docs name only tools that exist ----
+  // Anything backticked that starts with one of the tool verbs is a tool name, and has to be real.
+  // Field names like `source_text` and `quote` do not start with a verb, so they are not swept up.
+  const TOOL_VERB = /^(get|list|claim|renew|release|search|submit|review|report|request|fetch|export|triage|resolve)_[a-z0-9_]+$/;
+  const prose = [
+    ["crew/AGENTS.md", readFileSync(join(crewDir, "AGENTS.md"), "utf8")],
+    ["get_started", (await client.callTool({ name: "get_started", arguments: {} })).content.map((c) => c.text ?? "").join("\n")],
+    ["get_agent_contract", (await client.callTool({ name: "get_agent_contract", arguments: {} })).content.map((c) => c.text ?? "").join("\n")],
+    ...(existsSync(join(crewDir, "tasks/README.md")) ? [["tasks/README.md", readFileSync(join(crewDir, "tasks/README.md"), "utf8")]] : []),
+  ];
+  const ghosts = [];
+  for (const [where, body] of prose) {
+    for (const m of body.matchAll(/`([a-z0-9_]{4,40})`/g)) {
+      if (TOOL_VERB.test(m[1]) && !listed.includes(m[1])) ghosts.push(`${where}: ${m[1]}`);
+    }
+  }
+  assert.deepEqual(ghosts, [], `documentation names tools that do not exist: ${ghosts.join(", ")}`);
+  ok(`${prose.length} documents name only live tools`);
 
   await client.close();
 

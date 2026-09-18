@@ -166,7 +166,9 @@ Prompts: one per task, named after the task id, with an optional `scope` argumen
 - `source` MUST be an `http` or `https` URL. The server fetches it with redirects followed, a timeout (20 seconds in the reference server), and a size cap (8 MB).
 - HTML is reduced to text (scripts, styles, comments, and tags removed; common entities decoded). Plain text is used as is. PDFs are handled best-effort; when no text can be extracted the result is `unverifiable`.
 - Both the quote and the text are normalized: curly quotes and dashes straightened, whitespace collapsed to one space, lowercased. The first 120 characters of the normalized quote MUST appear in the normalized text.
-- Results: `matched`, `not_found`, `fetch_failed` (network error, non-2xx, wrong scheme, too large), `unverifiable`, or `skipped` (no source and quote pair). Only `matched` and `skipped` allow storage.
+- Results: `matched`, `cached` (the quote was found in the server's own cached copy of the document, the same text `fetch_document` returned the agent), `not_found`, `fetch_failed` (network error, non-2xx, wrong scheme, too large), `unverifiable`, or `skipped` (no source and quote pair). Only `matched`, `cached` and `skipped` allow storage without a flag.
+- A rejection carries the diagnosis, not only the verdict: `sought` (exactly what the server looked for, normalized), `matched_chars` of `sought_chars`, `source_chars`, and where the two diverge (`diverges_after`, `source_says`). A quote that was paraphrased rather than copied shows up immediately as a low `matched_chars` with the real sentence beside it.
+- A stored finding reports `quote_check`: `server_fetch`, `cached_text`, `agent_supplied`, or `none`.
 
 The check proves the words are on the page. It does not prove the page is the right one or that the status reading is correct; that is what review is for. A server MAY additionally archive the source at fetch time.
 
@@ -200,7 +202,9 @@ Anything specific to one problem domain belongs to the crew, not the engine. A c
 
 A source the server cannot read is not a reason to lose the work. When extraction yields nothing usable, or the server cannot reach a page the agent could, the agent resubmits with `source_text`: the text it extracted itself, containing the quoted sentence. The quote is checked against that text and the finding is stored with `source_check.status = "agent_text"` and `needs_human: true`. Agent-supplied text never auto-merges, whatever the contributor's reputation, because the chain of evidence runs through the agent rather than the document.
 
-Statuses: `matched`, `agent_text`, `not_found`, `fetch_failed`, `unverifiable`, `skipped`.
+Statuses: `matched`, `cached`, `agent_text`, `not_found`, `fetch_failed`, `unverifiable`, `skipped`.
+
+The cache is checked before the network. A document read through `fetch_document` is stored under the URL it was fetched from, and `submit_finding` verifies the quote against that copy first: the agent is checked against the text it actually read, not a second download that may have changed, been rate-limited, or been served differently. A crew tool that obtains text some other way — a vendor API, a rendered page, an OCR pass — can store it the same way with `documents.put(url, text)`, which makes a human-readable page citable even when a plain fetch of it returns nothing.
 
 ## 3b. The feedback queue
 
@@ -210,7 +214,7 @@ Before filing, the server compares the title against open issues by word overlap
 
 Each issue is written to `<issues dir>/<yyyy-mm-dd>-<slug>.yaml` so it can be reviewed in a diff and committed, and held in state so the tools can list and dedup. The directory defaults to an `issues` folder beside the state file, which on a container should be the mounted volume; `GROUNDCREW_ISSUES_DIR` overrides it. When `GITHUB_TOKEN` is set and the crew has a GitHub repo, the issue is also opened there and labelled by kind, and the URL stored on the record; without a token the response carries a prefilled issue URL instead.
 
-`list_issues` filters by kind and status. `triage_issue` sets a status (`open`, `triaged`, `done`, `wontfix`) and needs the maintainer token. `report_bug` and `request_feature` remain as aliases for one release.
+`list_issues` filters by kind and status. `triage_issue` sets a status (`open`, `triaged`, `done`, `wontfix`) and needs the maintainer token. `report_bug`, `request_feature` and `list_bugs` remain as aliases. Aliases come in pairs: a server that accepts `report_bug` and has no `list_bugs` reads as a broken tool surface to an agent, and was reported as one.
 
 ## 3c. Orientation
 

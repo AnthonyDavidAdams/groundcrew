@@ -89,11 +89,59 @@ function pdfTextBestEffort(buf) {
   return parts.join(" ");
 }
 
-// Returns { ok, status, detail }. status: "matched" | "not_found" | "fetch_failed" | "unverifiable" | "skipped".
+// The longest prefix of the quote that does appear in the text, so a failure says where the two
+// diverge instead of only that they do. Binary search: the answer is monotonic in prefix length.
+export function longestMatchingPrefix(quote, text) {
+  const needle = normalizeText(quote).slice(0, QUOTE_PREFIX_CHARS);
+  const hay = normalizeText(text);
+  if (!needle || !hay) return { chars: 0, at: -1 };
+  if (hay.includes(needle)) return { chars: needle.length, at: hay.indexOf(needle) };
+  let lo = 0, hi = needle.length, best = { chars: 0, at: -1 };
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const at = hay.indexOf(needle.slice(0, mid));
+    if (at >= 0) { best = { chars: mid, at }; lo = mid; } else hi = mid - 1;
+  }
+  return best;
+}
+
+// What the agent needs to fix a rejected quote: what the server looked for, how far it got, and the
+// text that is actually there at the point of divergence.
+export function diagnose(quote, text) {
+  const sought = normalizeText(quote).slice(0, QUOTE_PREFIX_CHARS);
+  const { chars, at } = longestMatchingPrefix(quote, text);
+  const hay = normalizeText(text);
+  const out = { sought, sought_chars: sought.length, matched_chars: chars, source_chars: hay.length };
+  if (chars >= 6 && at >= 0) {
+    out.diverges_after = sought.slice(0, chars);
+    out.source_says = hay.slice(at, at + chars + 160);
+  } else if (chars === 0) {
+    out.note = "not even the first few words of the quote appear in the source text.";
+  }
+  return out;
+}
+
+// Returns { ok, status, detail, source_chars, ... }.
+// status: "matched" (server fetched the source) | "cached" (server's own cached copy of the document,
+// the same text fetch_document returned you) | "agent_text" | "not_found" | "fetch_failed" |
+// "unverifiable" | "skipped".
 export async function verifyQuote(record, opts = {}) {
   const source = record?.source, quote = record?.quote;
   const supplied = opts.sourceText;
+  const cached = opts.cachedText;
   if (!source || !quote) return { ok: true, status: "skipped", detail: "record has no source and quote pair" };
+
+  // The cache is the copy the agent read through fetch_document. Checking it first verifies against
+  // the same bytes rather than a second download that may differ, and costs no network.
+  if (cached && quoteAppears(quote, cached)) {
+    return {
+      ok: true,
+      status: "cached",
+      detail: `first ${QUOTE_PREFIX_CHARS} characters of the quote found in the server's cached copy of this document, the same text fetch_document returned you`,
+      source_chars: normalizeText(cached).length,
+    };
+  }
+
   let fetched;
   try {
     fetched = await fetchSourceText(source, opts);
@@ -101,14 +149,21 @@ export async function verifyQuote(record, opts = {}) {
     // The source may be unreachable from the server while the agent could read it. Agent-supplied
     // text is weaker evidence, so it is accepted but always flagged for a human.
     if (supplied && quoteAppears(quote, supplied)) {
-      return { ok: true, status: "agent_text", detail: `the server could not fetch the source (${err.message}); the quote was found in the text you supplied. A maintainer must confirm it against the source.`, needs_human: true };
+      return { ok: true, status: "agent_text", detail: `the server could not fetch the source (${err.message}); the quote was found in the text you supplied. A maintainer must confirm it against the source.`, needs_human: true, source_chars: normalizeText(supplied).length };
     }
-    return { ok: false, status: "fetch_failed", detail: err.message };
+    // Having the document and not finding the quote in it is a different problem from not having the
+    // document, and saying "fetch failed" for the first sends the agent to fix the wrong thing.
+    if (cached) {
+      return { ok: false, status: "not_found", detail: `the quote does not appear in the server's cached copy of this document, which is the text fetch_document returned you. (The source itself was also unreachable just now: ${err.message}.)`, ...diagnose(quote, cached) };
+    }
+    return { ok: false, status: "fetch_failed", detail: err.message, ...(supplied ? diagnose(quote, supplied) : {}) };
   }
+
+  const source_chars = normalizeText(fetched.text).length;
   if (quoteAppears(quote, fetched.text)) {
-    return { ok: true, status: "matched", detail: `first ${QUOTE_PREFIX_CHARS} characters of the quote found in ${fetched.content_type || "the source"} (${fetched.bytes} bytes${fetched.extracted_by ? `, text via ${fetched.extracted_by}` : ""})` };
+    return { ok: true, status: "matched", detail: `first ${QUOTE_PREFIX_CHARS} characters of the quote found in ${fetched.content_type || "the source"} (${fetched.bytes} bytes${fetched.extracted_by ? `, text via ${fetched.extracted_by}` : ""})`, source_chars };
   }
-  const thin = fetched.pdf && normalizeText(fetched.text).length < 200;
+  const thin = fetched.pdf && source_chars < 200;
   if (supplied && quoteAppears(quote, supplied)) {
     return {
       ok: true,
@@ -117,10 +172,16 @@ export async function verifyQuote(record, opts = {}) {
         ? "the source is a PDF with no extractable text layer, probably a scan; the quote was found in the text you supplied. A maintainer must confirm it against the source."
         : "the quote was not found in the text the server extracted, but was found in the text you supplied. A maintainer must confirm it against the source.",
       needs_human: true,
+      source_chars: normalizeText(supplied).length,
     };
   }
   if (thin) {
-    return { ok: false, status: "unverifiable", detail: "the source is a PDF with no extractable text layer, probably a scan. Resubmit with `source_text` set to the text you extracted from it, and a maintainer will confirm the quote against the document." };
+    return { ok: false, status: "unverifiable", detail: "the source is a PDF with no extractable text layer, probably a scan. Resubmit with `source_text` set to the text you extracted from it, and a maintainer will confirm the quote against the document.", source_chars };
   }
-  return { ok: false, status: "not_found", detail: `the quote does not appear in the fetched source (${fetched.content_type || "unknown type"}, ${fetched.bytes} bytes). Check for a typo, a different edition of the document, or use \`source_text\` if you read a version the server cannot reach.` };
+  return {
+    ok: false,
+    status: "not_found",
+    detail: `the quote does not appear in the fetched source (${fetched.content_type || "unknown type"}, ${fetched.bytes} bytes). Check for a typo, a different edition of the document, or use \`source_text\` if you read a version the server cannot reach.`,
+    ...diagnose(quote, fetched.text),
+  };
 }

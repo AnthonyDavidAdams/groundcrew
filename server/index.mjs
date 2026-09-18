@@ -148,6 +148,8 @@ export function createServer(ctx) {
           "5. submit_finding: one call per record. The server fetches your source and checks your quote against it. A record that fails is refused and not stored.",
           "6. A maintainer reviews. get_contributor shows your record.",
         ],
+        if_a_call_seems_to_vanish:
+          "If a write tool comes back with 'No approval received', the call never reached this server: your client is asking your human to approve it. Ask them to approve write calls for this connector, then retry. Nothing was stored, and nothing is wrong with the server.",
         if_something_breaks:
           "Call report_issue with kind 'bug', and put the record that would not submit in `context` so the work is not lost. If the server cannot read a source you could read yourself, resubmit with `source_text` set to the text you extracted.",
         if_something_is_missing:
@@ -374,8 +376,23 @@ export function createServer(ctx) {
       if (!validate) return fail(`Task '${task}' has no readable schema (${t.schema}); the crew maintainer must fix tasks/tasks.yaml.`);
       if (!validate(record)) return fail(`Record does not match the schema for '${task}' (${t.schema}).`, { errors: formatErrors(validate.errors) });
 
-      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl, sourceText: suppliedText });
-      if (!check.ok) return fail(`Source check failed (${check.status}): ${check.detail}. The finding was not stored. Fix the quote or source and resubmit.`, { source: record.source, quote_prefix: String(record.quote).slice(0, 120) });
+      // If this document has already been through fetch_document, check the quote against that copy
+      // first: it is the text the agent actually read, and it costs no second download.
+      let cachedText = null;
+      if (record?.source) { try { cachedText = ctx.documents?.read(record.source)?.text ?? null; } catch { cachedText = null; } }
+
+      const check = await verifyQuote(record, { fetchImpl: ctx.fetchImpl, sourceText: suppliedText, cachedText });
+      if (!check.ok) {
+        const { ok: _ok, status, detail, ...diag } = check;
+        return fail(`Source check failed (${status}): ${detail}. The finding was not stored. Fix the quote or source and resubmit.`, {
+          source: record.source,
+          quote_check: "failed",
+          ...diag,
+          next: status === "not_found" && (diag.matched_chars ?? 0) > 0
+            ? "`sought` is exactly what the server looked for and `source_says` is what the document has at that point. Usually the quote was retyped rather than copied, or it spans a line break the extractor joined differently."
+            : "Open the source again and copy the sentence verbatim, or pass `source_text` with the text you extracted if the server cannot read what you read.",
+        });
+      }
 
       const now = new Date().toISOString();
       const finding = {
@@ -404,7 +421,8 @@ export function createServer(ctx) {
         }
       }
       store.addFinding(finding);
-      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, next: finding.status === "pending" ? "A maintainer will review it. Submit the next record under the same lease." : "Merged." });
+      const QUOTE_CHECK = { matched: "server_fetch", cached: "cached_text", agent_text: "agent_supplied", skipped: "none" };
+      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, next: finding.status === "pending" ? "A maintainer will review it. Submit the next record under the same lease." : "Merged." });
     }
   );
 
@@ -613,6 +631,24 @@ export function createServer(ctx) {
     },
     async ({ kind, status = "open", limit = 50, full = false }) => {
       const rows = (store.state.issues ?? []).filter((i) => (!kind || i.kind === kind) && (!status || i.status === status));
+      return text({
+        count: rows.length,
+        issues: rows.slice(-limit).map((i) => (full ? i : { id: i.id, kind: i.kind, title: i.title, status: i.status, created_at: i.created_at, url: i.url ?? null })),
+      });
+    }
+  );
+
+  // `report_bug` exists, so `list_bugs` has to. An agent that filed with one and could not list with
+  // the other reported it as a missing tool, which it was.
+  server.registerTool(
+    "list_bugs",
+    {
+      title: "List bugs (alias of list_issues)",
+      description: "Alias of list_issues filtered to kind 'bug'. Prefer list_issues, which also shows feature requests and questions.",
+      inputSchema: { status: z.enum(STATUSES).optional(), limit: z.number().int().min(1).max(200).optional(), full: z.boolean().optional() },
+    },
+    async ({ status = "open", limit = 50, full = false }) => {
+      const rows = (store.state.issues ?? []).filter((i) => i.kind === "bug" && (!status || i.status === status));
       return text({
         count: rows.length,
         issues: rows.slice(-limit).map((i) => (full ? i : { id: i.id, kind: i.kind, title: i.title, status: i.status, created_at: i.created_at, url: i.url ?? null })),
