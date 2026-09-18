@@ -109,6 +109,14 @@ export class StateStore {
     return issue;
   }
 
+  updateLease(id, patch) {
+    const l = this.findLease(id);
+    if (!l) return null;
+    Object.assign(l, patch);
+    this.save();
+    return l;
+  }
+
   updateIssue(id, patch) {
     const i = (this.state.issues ?? []).find((x) => x.id === id);
     if (!i) return null;

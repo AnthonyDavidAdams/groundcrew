@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
 import { buildActivity } from "./activity.mjs";
+import { clientIp, lookup as lookupPlace } from "./geo.mjs";
 import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -230,7 +231,7 @@ export function createServer(ctx) {
         human: z.string().trim().min(1).describe("The person running the agent: handle or email"),
       },
     },
-    async ({ task, scope, agent, human }) => {
+    async ({ task, scope, agent, human }, extra) => {
       const t = crew.tasksById[task];
       if (!t) return fail(`No task '${task}'. Tasks: ${crew.tasks.map((x) => x.id).join(", ")}`);
       if (t.scopes) {
@@ -240,6 +241,17 @@ export function createServer(ctx) {
       }
       const r = store.claim({ task, scope, agent, human, ttlHours });
       if (!r.ok) return fail(`Scope '${scope}' of ${task} is already leased until ${r.lease.expires_at}. Pick another scope or wait.`, { lease: r.lease });
+
+      // Resolve the contributor's rough location once, here, and keep only the city and country. The
+      // address itself is never stored. It goes on the lease so every finding under it inherits it
+      // without another lookup, and so that a contributor who works for hours is located once.
+      try {
+        const ip = clientIp(extra?.requestInfo?.headers ?? {});
+        const place = await lookupPlace(ip, { fetchImpl: ctx.fetchImpl });
+        if (place) store.updateLease?.(r.lease.id, { place });
+        if (place) r.lease.place = place;
+      } catch { /* never let geo stand between a contributor and the work */ }
+
       return text({ ...r.lease, next: `Run the task for scope '${scope}' and call submit_finding with lease_id ${r.lease.id} for each record. Renew before ${r.lease.expires_at}.` });
     }
   );
@@ -407,6 +419,7 @@ export function createServer(ctx) {
         agent: lease.agent,
         human: lease.human,
         skill: skill ?? skillLabel(t),
+        place: lease.place ?? null,
         timestamp: now,
         source_check: { ...check, checked_at: now, ok: undefined },
         notes: notes ?? null,

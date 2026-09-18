@@ -36,6 +36,13 @@ const ago = (iso) => {
   return `${d} day${d === 1 ? "" : "s"} ago`;
 };
 
+// City, region and country only — the same three fields the lease stored. Nothing here can be turned
+// back into an address, because the address was never kept.
+const placeOf = (p) =>
+  p && (p.city || p.region || p.country)
+    ? { city: p.city ?? null, region: p.region ?? null, country: p.country ?? null, country_code: p.country_code ?? null, label: p.label ?? [p.city, p.region, p.country_code || p.country].filter(Boolean).join(", ") }
+    : null;
+
 const subjectOf = (rec) => {
   if (!rec || typeof rec !== "object") return null;
   for (const k of ["name", "title", "district", "subject", "id"]) if (typeof rec[k] === "string" && rec[k].trim()) return rec[k].trim().slice(0, 80);
@@ -54,7 +61,7 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
   const events = [];
   for (const f of findings) {
     const subject = subjectOf(f.record);
-    const who = { agent: safeAgent(f.agent), contributor: handle(f.human, salt) };
+    const who = { agent: safeAgent(f.agent), contributor: handle(f.human, salt), place: placeOf(f.place) };
     // A record with no quote is a district somebody could not get a primary source for. It is still
     // work, and it still belongs in the feed, but it must not be described as sourced.
     const sourced = Boolean(f.record && f.record.quote && f.record.source);
@@ -91,6 +98,7 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
       headline: `An agent started work on ${l.scope ?? "a new scope"}`,
       agent: safeAgent(l.agent),
       contributor: handle(l.human, salt),
+      place: placeOf(l.place),
     });
   }
   for (const i of issues) {
@@ -128,6 +136,10 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     },
     scopes: [...scopes].sort(),
     events: recent,
-    note: "Contributors are shown as a short one-way hash of the address they gave. No email address, IP address or location is collected or published here.",
+    places: [...new Set(events.map((e) => e.place && e.place.label).filter(Boolean))].slice(0, 20),
+    note:
+      "Contributors are shown as a short one-way hash of the email they gave; the address itself is never published. " +
+      "Location is the city the contributor's connection resolved to when they claimed work, looked up once and stored as city, region and country. " +
+      "No email address and no IP address is stored anywhere in this project.",
   };
 }
