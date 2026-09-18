@@ -15,7 +15,9 @@ import { join } from "node:path";
 
 export const ATTRIBUTION = "© OpenStreetMap contributors";
 export const ATTRIBUTION_URL = "https://www.openstreetmap.org/copyright";
-export const MIN_ZOOM = 1, MAX_ZOOM = 12;      // a town, never a street
+// Zoom 0 is the single tile that holds the whole world, which is what a contribution with no
+// location gets: somewhere on Earth. 12 is a town; nothing here ever resolves to a street.
+export const MIN_ZOOM = 0, MAX_ZOOM = 12;
 export const MAX_TILE_BYTES = 512 * 1024;
 const UPSTREAM = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 const UA = "groundcrew/0.7 (+https://github.com/AnthonyDavidAdams/groundcrew; contact a@175g.com)";
