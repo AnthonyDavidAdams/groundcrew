@@ -88,8 +88,12 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
       });
     }
   }
+  // A scope that was claimed and handed back with nothing submitted under it is not a contribution,
+  // and a feed that counts it is flattering itself. Only show a claim that was worked or is still open.
+  const workedLeases = new Set(findings.map((f) => f.lease_id).filter(Boolean));
   for (const l of leases) {
     if (!l.claimed_at && !l.created_at) continue;
+    if (l.released_at && !workedLeases.has(l.id)) continue;
     events.push({
       at: l.claimed_at ?? l.created_at,
       kind: "claimed",
