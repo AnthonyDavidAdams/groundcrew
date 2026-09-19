@@ -48,8 +48,16 @@ export function quoteAppears(quote, text) {
   return normalizeText(text).includes(needle);
 }
 
+// Google Docs serves its HTML with words split across <span> elements, so a quote that is plainly
+// there does not match once tags become spaces. The document's own plain-text export has the same
+// words without the markup. Districts publish handbooks this way often enough to be worth handling.
+export function readableForm(url) {
+  const m = String(url).match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? `https://docs.google.com/document/d/${m[1]}/export?format=txt` : String(url);
+}
+
 export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, fetchImpl = fetch, userAgent = USER_AGENT } = {}) {
-  const u = new URL(url);
+  const u = new URL(readableForm(url));
   if (!/^https?:$/.test(u.protocol)) throw new Error(`source must be http(s), got ${u.protocol}`);
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
