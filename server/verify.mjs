@@ -10,7 +10,11 @@ export const USER_AGENT =
 
 export const QUOTE_PREFIX_CHARS = 120;
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
-export const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+// Matches MAX_DOCUMENT_BYTES in documents.mjs deliberately. When this was smaller, a contributor
+// could read a document through fetch_document and then have the finding that cites it refused at
+// submit time for being too large — the tools disagreeing with each other about the same file.
+// Real policy manuals reach this size: Madison City Alabama's is 17.6 MB over 167 pages.
+export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 
 export function normalizeText(s) {
   return String(s ?? "")
