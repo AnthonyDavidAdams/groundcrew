@@ -258,8 +258,45 @@ A test claim.
     await hc.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
     const c2 = parse(await hc.callTool({ name: "get_contributor", arguments: { human: "tester@example.org" } }));
     assert.equal(c2.approved, 1);
-    await hc.close();
     ok("HTTP transport get_contributor reads the same state");
+
+    // ---- badges ----
+    const none = parse(await hc.callTool({ name: "get_badge", arguments: { human: "nobody@example.org" } }));
+    assert.equal(none.approved, 0);
+    assert.equal(none.tier, null);
+    ok("get_badge on a stranger reports nothing rather than failing");
+
+    // Nothing is listed until somebody claims, which is the opt-in the whole design rests on.
+    const before = await (await fetch(`http://127.0.0.1:${port}/crew.json`)).json();
+    assert.equal(before.members.length, 0);
+    ok("crew roster is empty before anyone claims a badge");
+
+    const claimed = parse(await hc.callTool({ name: "claim_badge", arguments: { human: "tester@example.org", display_name: "A Tester" } }));
+    assert.equal(claimed.display_name, "A Tester");
+    assert.equal(claimed.districts, 1);
+    assert.match(claimed.image, /\/badge\/[0-9a-f]{6}\.svg$/);
+    ok("claim_badge mints a badge with the figures from the record");
+
+    const roster = await (await fetch(`http://127.0.0.1:${port}/crew.json`)).json();
+    assert.equal(roster.members.length, 1);
+    assert.equal(roster.members[0].display_name, "A Tester");
+    assert.equal(roster.contributors_total >= 1, true);
+    ok("crew roster lists a contributor once they have claimed");
+
+    const svgRes = await fetch(`http://127.0.0.1:${port}${claimed.image}`);
+    const svg = await svgRes.text();
+    assert.equal(svgRes.headers.get("content-type").startsWith("image/svg+xml"), true);
+    assert.match(svg, /<svg[^>]*width="1200"[^>]*height="1200"/);
+    assert.match(svg, /A Tester/);
+    // The email must never reach the image.
+    assert.equal(svg.includes("tester@example.org"), false);
+    ok("the badge image is square, carries the name, and never carries the address");
+
+    const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
+    assert.equal(missing.status, 404);
+    ok("a badge for a handle nobody holds is a 404, not a blank certificate");
+
+    await hc.close();
   } finally {
     child.kill("SIGTERM");
     await new Promise((r) => child.on("exit", r));

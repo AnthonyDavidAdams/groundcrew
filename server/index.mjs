@@ -971,6 +971,38 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       }
     }
 
+    // The crew roster: everyone who has claimed a badge, and what they have had approved. Only claimed
+    // badges appear, because claiming one is the moment somebody chose to be listed. Everyone else's
+    // work is in the record and in the activity feed, under a handle, exactly as before.
+    if (url.pathname === "/crew.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=60" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" }); return res.end(); }
+      if (req.method !== "GET") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET only" })); }
+      const claimed = Object.keys(ctx.store.state.badges ?? {});
+      const humans = new Map();
+      for (const f of ctx.store.state.findings) {
+        if (f.status !== "approved" || !f.human) continue;
+        const id = handleOf(f.human, ctx.crew.name);
+        if (claimed.includes(id) && !humans.has(id)) humans.set(id, f.human);
+      }
+      const members = [...humans].map(([id, human]) => {
+        const b = badgeFor(ctx, { human });
+        return { id: b.id, display_name: b.display_name, districts: b.districts, children: b.children,
+                 tier: b.tier?.name ?? null, claimed_at: b.claimed_at, badge: `/badge/${b.id}.svg` };
+      }).sort((a, b) => b.districts - a.districts || String(a.id).localeCompare(String(b.id)));
+      // The totals cover everyone, claimed or not, so the roster never reads as if it were the whole crew.
+      const everyone = new Set(ctx.store.state.findings.filter((f) => f.status === "approved" && f.human).map((f) => f.human));
+      res.writeHead(200, headers);
+      return res.end(JSON.stringify({
+        crew: ctx.crew.name,
+        members,
+        contributors_total: everyone.size,
+        listed: members.length,
+        tiers: TIERS,
+        note: "Only contributors who claimed a badge are listed. Everyone else's work is in the record and the activity feed under an anonymous handle.",
+      }));
+    }
+
     // A contributor's badge, as an image anyone can hotlink. It is generated from the record on every
     // request rather than stored, so it is never out of date with what the person has actually had
     // approved -- and so a badge cannot be forged by writing a file.
@@ -1008,7 +1040,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(JSON.stringify(body));
     }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", badge: "/badge/{handle}.svg", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", crew_roster: "/crew.json", badge: "/badge/{handle}.svg", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");
