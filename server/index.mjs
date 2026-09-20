@@ -13,6 +13,8 @@
 
 import { existsSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
+import { badgeFor, badgeSvg, TIERS } from "./badge.mjs";
+import { handle as handleOf } from "./activity.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
@@ -760,6 +762,61 @@ export function createServer(ctx) {
     }
   );
 
+  // ---- badges ----
+  server.registerTool(
+    "claim_badge",
+    {
+      title: "Claim your badge",
+      description:
+        "Mint a square, shareable badge for the work you have had approved here, and get the links to share it. " +
+        "Nothing is minted until you ask: publishing someone's work under their name is theirs to decide. " +
+        "Pass display_name only if the person you are working for wants a name on it -- ask them first, and leave it out if they would rather be the handle. " +
+        "The badge carries the number of districts whose policy is on the public record because of them, and it links to the page where anyone else can start. Call it again any time; the numbers are recomputed from the record, never stored.",
+      inputSchema: {
+        human: z.string().trim().min(1).describe("The person whose work this is: the same handle or email their findings carry"),
+        display_name: z.string().trim().min(1).max(40).optional().describe("A name to print on the badge, only if they asked for one. Otherwise the badge shows their anonymous handle."),
+      },
+    },
+    async ({ human, display_name }) => {
+      const b = badgeFor(ctx, { human });
+      if (!b.approved) return fail(`Nothing approved yet for '${human}', so there is nothing to put on a badge. Submit a finding, and once a maintainer approves it this will work. get_contributor shows where you stand.`);
+      store.state.badges ??= {};
+      store.state.badges[b.id] = {
+        ...(store.state.badges[b.id] ?? {}),
+        display_name: display_name ?? store.state.badges[b.id]?.display_name ?? null,
+        claimed_at: store.state.badges[b.id]?.claimed_at ?? new Date().toISOString(),
+      };
+      store.save();
+      const base = (crew.crew.badge_base ?? "").replace(/\/$/, "");
+      const fresh = badgeFor(ctx, { human });
+      return text({
+        ...fresh,
+        image: base ? `${base}/badge/${fresh.id}.svg` : `/badge/${fresh.id}.svg`,
+        page: crew.crew.site ? `${String(crew.crew.site).replace(/\/$/, "")}/crew/${fresh.id}/` : null,
+        share_text: `${fresh.display_name ?? "My agent"} put ${fresh.districts} school district${fresh.districts === 1 ? "'s" : "s'"} corporal punishment policy on the public record. Point yours at it: ${crew.crew.site ?? ""}/contribute`,
+        privacy: "The badge shows your handle unless you gave a display name. Your email is never on it and never public.",
+        next: "Share the image, or send someone the contribute page. The badge updates itself as more of your findings are approved.",
+      });
+    }
+  );
+
+  server.registerTool(
+    "get_badge",
+    {
+      title: "See a badge",
+      description: "The badge figures for a contributor, whether or not they have claimed one: districts recorded, children covered by those districts in the federal count, and the tier those add up to.",
+      inputSchema: { human: z.string().trim().min(1).optional(), id: z.string().trim().min(4).max(12).optional().describe("A public handle, if you have that rather than the person's address") },
+    },
+    async ({ human, id }) => {
+      if (!human && !id) return fail("Give human or id.");
+      if (human) return text(badgeFor(ctx, { human }));
+      const rows = store.state.findings.filter((f) => f.status === "approved");
+      const match = rows.find((f) => handleOf(f.human, crew.name) === id);
+      if (!match) return fail(`No contributor with handle '${id}'.`);
+      return text(badgeFor(ctx, { human: match.human }));
+    }
+  );
+
   // ---- templates (optional, kept from the campaign server) ----
   if (Object.keys(crew.templates).length) {
     server.registerTool(
@@ -914,6 +971,29 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       }
     }
 
+    // A contributor's badge, as an image anyone can hotlink. It is generated from the record on every
+    // request rather than stored, so it is never out of date with what the person has actually had
+    // approved -- and so a badge cannot be forged by writing a file.
+    //
+    // SVG, not PNG: this server has no rasterizer and adding one for this is not worth the weight. SVG
+    // renders in Slack, Discord, iMessage, GitHub and any browser, and downloads cleanly. The PNG that
+    // Twitter and LinkedIn cards need is generated with the site, from this same markup.
+    const badgeMatch = url.pathname.match(/^\/badge\/([0-9a-f]{4,12})\.svg$/);
+    if (badgeMatch) {
+      const id = badgeMatch[1];
+      const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=300" };
+      const row = ctx.store.state.findings.find((f) => f.status === "approved" && handleOf(f.human, ctx.crew.name) === id);
+      if (!row) { res.writeHead(404, { ...headers, "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "no such contributor" })); }
+      const b = badgeFor(ctx, { human: row.human });
+      const svg = badgeSvg({
+        name: b.display_name ?? `contributor ${b.id}`,
+        tier: b.tier, approved: b.districts, districts: b.districts, children: b.children,
+        site: ctx.crew.crew.site ?? "", id: b.id,
+      });
+      res.writeHead(200, headers);
+      return res.end(svg);
+    }
+
     // The public feed. Readable by anyone, including a browser on the crew's own website, which is
     // why it is the only route that sets CORS and the only one that never sees a token.
     if (url.pathname === "/activity.json") {
@@ -928,7 +1008,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(JSON.stringify(body));
     }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", badge: "/badge/{handle}.svg", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");

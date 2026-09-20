@@ -12,7 +12,7 @@ export function newId(prefix) {
 }
 
 export function emptyState() {
-  return { version: 1, leases: [], findings: [], issues: [], fetches: [], bugs: [], requests: [] };
+  return { version: 1, leases: [], findings: [], issues: [], fetches: [], bugs: [], requests: [], badges: {} };
 }
 
 export class StateStore {
