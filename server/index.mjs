@@ -762,6 +762,89 @@ export function createServer(ctx) {
     }
   );
 
+  // ---- search / fetch, for clients that expect those exact names ----
+  //
+  // ChatGPT's research connectors look for tools called `search` and `fetch` with a particular result
+  // shape. The capability already exists here under better names; these are thin aliases over it, not a
+  // second implementation, so there is nothing to keep in step. Any client benefits: "search then fetch"
+  // is a reasonable thing to expect of a server whatever is asking.
+  const claimUrl = (c) => (c.sources ?? []).find((x) => x.primary)?.url ?? (c.sources ?? [])[0]?.url ?? null;
+  server.registerTool(
+    "search",
+    {
+      title: "Search this crew",
+      description:
+        "Keyword search across the crew's verified claims and its data records, returning ids you can pass to fetch. " +
+        "All words must match. Use it to find what this crew already knows before submitting anything, and to answer a question from the record rather than from memory.",
+      inputSchema: { query: z.string().min(1).describe("Words to match") },
+    },
+    async ({ query }) => {
+      const results = [];
+      for (const c of searchClaims(crew.claims, query)) {
+        results.push({ id: `claim:${c.id}`, title: String(c.claim ?? c.id).slice(0, 200), url: claimUrl(c) });
+      }
+      const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+      for (const [collection, recs] of Object.entries(crew.collections)) {
+        for (const [id, rec] of Object.entries(recs)) {
+          // A state's district file is one record holding hundreds of districts. Returning the file
+          // when someone asks about Pike County is technically a hit and useless; the answer they want
+          // is one district, so the rows inside are searched and returned individually.
+          const rows = Array.isArray(rec?.districts) ? rec.districts : null;
+          if (rows) {
+            for (const d of rows) {
+              const hay = JSON.stringify(d).toLowerCase();
+              if (!words.every((w) => hay.includes(w))) continue;
+              results.push({ id: `${collection}:${id}:${d.name}`, title: `${d.name}, ${id}: ${d.status === "bans" ? "prohibits" : d.status === "allows" ? "permits" : d.status} corporal punishment`.slice(0, 200), url: d.source ?? null });
+              if (results.length > 200) break;
+            }
+            if (results.length > 200) break;
+            continue;
+          }
+          const hay = JSON.stringify(rec).toLowerCase();
+          if (!words.every((w) => hay.includes(w))) continue;
+          results.push({ id: `${collection}:${id}`, title: `${rec?.name ?? id} (${collection})`.slice(0, 200), url: rec?.source ?? null });
+          if (results.length > 200) break;
+        }
+        if (results.length > 200) break;
+      }
+      return text({ results: results.slice(0, 100) });
+    }
+  );
+
+  server.registerTool(
+    "fetch",
+    {
+      title: "Fetch one result",
+      description: "The full text of one result from search, by the id search returned. Ids look like 'claim:<id>' or '<collection>:<id>'.",
+      inputSchema: { id: z.string().min(1).describe("An id from search, e.g. claim:law-ingraham-v-wright-1977") },
+    },
+    async ({ id }) => {
+      const i = String(id).indexOf(":");
+      if (i < 1) return fail(`'${id}' is not a search id. They look like 'claim:<id>' or '<collection>:<id>'.`);
+      const kind = id.slice(0, i), key = id.slice(i + 1);
+      if (kind === "claim") {
+        const c = crew.claims.find((x) => x.id === key);
+        if (!c) return fail(`No claim '${key}'.`);
+        return text({ id, title: String(c.claim ?? key).slice(0, 200), text: `${c.claim}\n\n${c.body ?? ""}`.trim(),
+          url: claimUrl(c), metadata: { status: c.status, as_of: c.as_of ?? null, last_verified: c.last_verified ?? null, sources: c.sources ?? [] } });
+      }
+      const recs = crew.collections[kind];
+      if (!recs) return fail(`No collection '${kind}'. Available: ${Object.keys(crew.collections).join(", ") || "(none)"}`);
+      // search returns "<collection>:<state>:<district name>" for a row inside a state file.
+      const deep = key.indexOf(":");
+      if (deep > 0) {
+        const parent = recs[key.slice(0, deep)], want = key.slice(deep + 1);
+        const row = Array.isArray(parent?.districts) ? parent.districts.find((d) => d.name === want) : null;
+        if (!row) return fail(`No district '${want}' in ${kind}:${key.slice(0, deep)}.`);
+        return text({ id, title: `${row.name}, ${key.slice(0, deep)}`, text: JSON.stringify(row, null, 1), url: row.source ?? null,
+          metadata: { collection: kind, state: key.slice(0, deep), status: row.status, quote: row.quote ?? null, last_verified: row.last_verified ?? null } });
+      }
+      const r = recs[key];
+      if (r === undefined) return fail(`No record '${key}' in ${kind}.`);
+      return text({ id, title: `${r?.name ?? key} (${kind})`, text: JSON.stringify(r, null, 1), url: r?.source ?? null, metadata: { collection: kind } });
+    }
+  );
+
   // ---- badges ----
   server.registerTool(
     "claim_badge",
