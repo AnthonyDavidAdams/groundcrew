@@ -85,25 +85,47 @@ export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_M
 
 // Real PDF text extraction (pure JS, no native deps, works on Alpine). Falls back to pulling
 // uncompressed text operators if the parser cannot read the file, which is the case for scans.
+// Parsing is bounded as well as fetching. A large scanned PDF has no text layer but still costs real
+// CPU to walk, and an unbounded parse hangs whatever is waiting on it — on the server that is a
+// request handler, which a contributor citing a 21 MB scan should not be able to occupy. Walthall
+// County Mississippi publishes exactly that: 21,776,100 bytes, image-only, no text at the end of it.
+export const PDF_PARSE_TIMEOUT_MS = 20_000;
+
 async function pdfText(buf) {
   try {
     const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(buf));
-    const { text } = await extractText(pdf, { mergePages: true });
+    const parse = (async () => {
+      const pdf = await getDocumentProxy(new Uint8Array(buf));
+      return (await extractText(pdf, { mergePages: true })).text;
+    })();
+    const text = await Promise.race([
+      parse,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("pdf parse timed out")), PDF_PARSE_TIMEOUT_MS)),
+    ]);
     if (normalizeText(text).length >= 200) return { text, extracted_by: "unpdf" };
-  } catch { /* fall through */ }
+  } catch { /* fall through to the cheap path */ }
   return { text: pdfTextBestEffort(buf), extracted_by: "operators" };
 }
 
 // Last resort for PDFs the parser cannot open: pull any uncompressed text operators.
 // A scanned PDF has no text layer at all and will still come back empty, which is what
 // `source_text` on submit_finding is for.
+// The quantifiers here are bounded, and the scan is capped, for a reason that cost real time to find:
+// the original patterns used an unbounded alternation inside a group, which backtracks catastrophically
+// on actual PDF binary. Walthall County Mississippi publishes a 21,776,100-byte image-only handbook,
+// and this function never returned on it — not slow, never. A scanned PDF has no text operators to
+// find anyway, so reading the first few megabytes is as good as reading all of it.
+const BEST_EFFORT_SCAN_BYTES = 4 * 1024 * 1024;
+const RUN = 2000;  // longest string literal this will consider, which is far longer than any real one
+
 function pdfTextBestEffort(buf) {
-  const s = buf.toString("latin1");
+  const s = buf.subarray(0, BEST_EFFORT_SCAN_BYTES).toString("latin1");
   const parts = [];
-  for (const m of s.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)) parts.push(m[1].replace(/\\([()\\])/g, "$1"));
-  for (const m of s.matchAll(/\[((?:\((?:\\.|[^\\)])*\)|[^\]])*)\]\s*TJ/g)) {
-    parts.push(m[1].replace(/\(((?:\\.|[^\\)])*)\)/g, (_, t) => t.replace(/\\([()\\])/g, "$1")).replace(/-?\d+(\.\d+)?/g, ""));
+  for (const m of s.matchAll(new RegExp(String.raw`\(([^()\\]{0,${RUN}}(?:\\.[^()\\]{0,${RUN}}){0,64})\)\s*Tj`, "g"))) {
+    parts.push(m[1].replace(/\\([()\\])/g, "$1"));
+  }
+  for (const m of s.matchAll(new RegExp(String.raw`\[([^\[\]]{0,${RUN}})\]\s*TJ`, "g"))) {
+    parts.push(m[1].replace(/\(([^()\\]*)\)/g, (_, t) => t).replace(/-?\d+(\.\d+)?/g, ""));
   }
   return parts.join(" ");
 }
