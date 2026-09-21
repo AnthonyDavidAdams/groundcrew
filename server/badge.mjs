@@ -12,6 +12,24 @@
 //     decide, not ours.
 import { handle } from "./activity.mjs";
 
+// Rasterising the badge is what lets it be sent rather than linked: MCP tool results can carry an
+// image, and a picture that appears in the conversation is worth more than a URL somebody has to
+// open. SVG is kept as the source of truth and PNG is produced from it, so there is one design.
+let Resvg = null;
+async function rasterizer() {
+  if (Resvg === null) {
+    try { ({ Resvg } = await import("@resvg/resvg-js")); }
+    catch { Resvg = false; }   // no rasterizer here: callers fall back to the SVG and say so
+  }
+  return Resvg;
+}
+
+export async function badgePng(svg, width = 1200) {
+  const R = await rasterizer();
+  if (!R) return null;
+  return new R(svg, { fitTo: { mode: "width", value: width }, background: "#0B1129" }).render().asPng();
+}
+
 export const TIERS = [
   { at: 1, name: "Recorded", blurb: "put a district's policy on the public record" },
   { at: 5, name: "Scout", blurb: "recorded five districts" },

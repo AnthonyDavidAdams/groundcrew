@@ -292,6 +292,21 @@ A test claim.
     assert.equal(svg.includes("tester@example.org"), false);
     ok("the badge image is square, carries the name, and never carries the address");
 
+    // The badge has to arrive as an image, not as a link to one: that is the difference between the
+    // contributor having something to post and having an errand.
+    const raw = await hc.callTool({ name: "claim_badge", arguments: { human: "tester@example.org" } });
+    const img = raw.content.find((c) => c.type === "image");
+    assert.ok(img, "claim_badge returns an image block");
+    assert.equal(img.mimeType, "image/png");
+    assert.equal(Buffer.from(img.data, "base64").subarray(1, 4).toString(), "PNG");
+    ok("claim_badge sends the badge as a PNG in the tool result");
+
+    const pngRes = await fetch(`http://127.0.0.1:${port}${claimed.image.replace(/\.svg$/, ".png")}`);
+    assert.equal(pngRes.headers.get("content-type"), "image/png");
+    const bytes = Buffer.from(await pngRes.arrayBuffer());
+    assert.equal(bytes.subarray(1, 4).toString(), "PNG");
+    ok("the badge is also served as a PNG, which is what social cards need");
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");

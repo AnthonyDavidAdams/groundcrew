@@ -13,7 +13,7 @@
 
 import { existsSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
-import { badgeFor, badgeSvg, TIERS } from "./badge.mjs";
+import { badgeFor, badgeSvg, badgePng, TIERS } from "./badge.mjs";
 import { handle as handleOf } from "./activity.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -872,14 +872,25 @@ export function createServer(ctx) {
       store.save();
       const base = (crew.crew.badge_base ?? "").replace(/\/$/, "");
       const fresh = badgeFor(ctx, { human });
-      return text({
+      // Send the badge, do not merely link it. An image in the conversation is something the person can
+      // save or post straight away; a URL is a chore. 600px keeps the payload around 38 KB of base64,
+      // which is small enough to hand back on every call, and the full-size image stays at its URL.
+      const svg = badgeSvg({ name: fresh.display_name ?? `contributor ${fresh.id}`, tier: fresh.tier,
+        approved: fresh.districts, districts: fresh.districts, children: fresh.children,
+        site: crew.crew.site ?? "", id: fresh.id });
+      const png = await badgePng(svg, 600);
+      const payload = {
         ...fresh,
         image: base ? `${base}/badge/${fresh.id}.svg` : `/badge/${fresh.id}.svg`,
         page: crew.crew.site ? `${String(crew.crew.site).replace(/\/$/, "")}/crew/${fresh.id}/` : null,
         share_text: `${fresh.display_name ?? "My agent"} put ${fresh.districts} school district${fresh.districts === 1 ? "'s" : "s'"} corporal punishment policy on the public record. Point yours at it: ${crew.crew.site ?? ""}/contribute`,
         privacy: "The badge shows your handle unless you gave a display name. Your email is never on it and never public.",
         next: "Share the image, or send someone the contribute page. The badge updates itself as more of your findings are approved.",
-      });
+      };
+      const content = [{ type: "text", text: JSON.stringify(payload, null, 2) }];
+      if (png) content.push({ type: "image", data: png.toString("base64"), mimeType: "image/png" });
+      else content.push({ type: "text", text: "This server has no rasterizer, so the badge is at the SVG url above rather than attached here." });
+      return { content };
     }
   );
 
@@ -1093,10 +1104,11 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
     // SVG, not PNG: this server has no rasterizer and adding one for this is not worth the weight. SVG
     // renders in Slack, Discord, iMessage, GitHub and any browser, and downloads cleanly. The PNG that
     // Twitter and LinkedIn cards need is generated with the site, from this same markup.
-    const badgeMatch = url.pathname.match(/^\/badge\/([0-9a-f]{4,12})\.svg$/);
+    const badgeMatch = url.pathname.match(/^\/badge\/([0-9a-f]{4,12})\.(svg|png)$/);
     if (badgeMatch) {
       const id = badgeMatch[1];
-      const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=300" };
+      const wantPng = badgeMatch[2] === "png";
+      const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": wantPng ? "image/png" : "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=300" };
       const row = ctx.store.state.findings.find((f) => f.status === "approved" && handleOf(f.human, ctx.crew.name) === id);
       if (!row) { res.writeHead(404, { ...headers, "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "no such contributor" })); }
       const b = badgeFor(ctx, { human: row.human });
@@ -1105,6 +1117,13 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
         tier: b.tier, approved: b.districts, districts: b.districts, children: b.children,
         site: ctx.crew.crew.site ?? "", id: b.id,
       });
+      if (wantPng) {
+        // Twitter and LinkedIn cards will not render SVG, so the social image has to be a raster.
+        const png = await badgePng(svg, 1200);
+        if (!png) { res.writeHead(501, { ...headers, "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "no rasterizer on this server; use the .svg" })); }
+        res.writeHead(200, { ...headers, "Content-Length": png.length });
+        return res.end(png);
+      }
       res.writeHead(200, headers);
       return res.end(svg);
     }
@@ -1123,7 +1142,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(JSON.stringify(body));
     }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", crew_roster: "/crew.json", badge: "/badge/{handle}.svg", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", crew_roster: "/crew.json", badge: "/badge/{handle}.svg or .png", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");
