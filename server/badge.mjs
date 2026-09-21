@@ -34,7 +34,7 @@ const SANS = ["DejaVu Sans", "Liberation Sans", "Noto Sans", "Helvetica", "Arial
 export async function badgePng(svg, width = 1200) {
   const R = await rasterizer();
   if (!R) return null;
-  return new R(svg, {
+  const rendered = new R(svg, {
     fitTo: { mode: "width", value: width },
     background: "#0B1129",
     font: {
@@ -43,17 +43,26 @@ export async function badgePng(svg, width = 1200) {
       serifFamily: SERIF.find(Boolean),
       sansSerifFamily: SANS.find(Boolean),
     },
-  }).render().asPng();
+  }).render();
+  // A badge with no text on it is not worth sending. Better to fall back to the SVG, which a browser
+  // will render with its own fonts, than to hand someone a picture of an empty circle.
+  if (!looksRendered(rendered)) return null;
+  return rendered.asPng();
 }
 
-// Did the text actually draw? A badge is mostly dark blue with a little green and gold; text adds a
-// large area of near-white that nothing else in the design contributes. Cheap, and it catches the one
-// failure that looks like success.
-export function looksRendered(png) {
-  if (!png || png.length < 2000) return false;
-  // PNG is compressed, so inspect size rather than pixels: the same badge with type is several times
-  // the size of the same badge without it. Measured on Alpine: 29 KB without text, 64 KB with.
-  return png.length > 40_000;
+// Did the text actually draw? Count near-white pixels. The badge's palette is dark blue, green and
+// gold; the only thing on it that is close to white is the type, so a render with no glyphs has
+// essentially none. Measured: 1,498 of 360,000 at 600px with the text, single digits without it.
+//
+// The first version of this compared file size, which was wrong in a way worth recording: a 1200px
+// badge with text and a 600px badge with text are both about 29 KB, so a threshold tuned at one width
+// called the other one blank. Size conflates how big the image is with how much is in it.
+export function looksRendered(rendered) {
+  const px = rendered?.pixels;
+  if (!px) return false;
+  let bright = 0;
+  for (let i = 0; i < px.length; i += 4) if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) bright++;
+  return bright > (px.length / 4) * 0.0005;   // 0.05% of the canvas, against a measured 0.4%
 }
 
 export const TIERS = [
@@ -93,7 +102,7 @@ export function badgeSvg({ name, tier, approved, districts, children, site, id }
 <text x="600" y="762" text-anchor="middle" fill="#C9A227" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif" font-size="32" letter-spacing="2">${esc(fit(sub, 42))}</text>
 <text x="600" y="866" text-anchor="middle" fill="#F4F1E8" font-family="Iowan Old Style,Palatino,Georgia,serif" font-size="44">${esc(fit(name, 30))}</text>
 ${children ? `<text x="600" y="936" text-anchor="middle" fill="#9AA6C4" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif" font-size="27">covering ${esc(children.toLocaleString())} children in the federal count</text>` : ""}
-<text x="600" y="1066" text-anchor="middle" fill="#7CE0A8" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif" font-size="30" letter-spacing="1">${esc(String(site ?? "").replace(/^https?:\/\//, ""))}/contribute</text>
+<text x="600" y="1066" text-anchor="middle" fill="#7CE0A8" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif" font-size="30" letter-spacing="1">${esc(String(site ?? "").replace(/^https?:\/\//, "").replace(/\/+$/, ""))}/contribute</text>
 ${name && !String(name).includes(id) ? `<text x="600" y="1112" text-anchor="middle" fill="#5E6A8A" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif" font-size="20" letter-spacing="1">${esc(id)}</text>` : ""}
 </svg>`;
 }

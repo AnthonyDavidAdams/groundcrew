@@ -307,6 +307,17 @@ A test claim.
     assert.equal(bytes.subarray(1, 4).toString(), "PNG");
     ok("the badge is also served as a PNG, which is what social cards need");
 
+    // The failure that looks like success: a container with no fonts renders every shape and no text,
+    // and the result is a perfectly valid PNG of an empty circle. Assert that a textless render is
+    // refused, at every size, rather than that the bytes are a PNG.
+    {
+      const { badgePng, looksRendered } = await import("../server/badge.mjs");
+      const blank = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200"><rect width="1200" height="1200" fill="#0B1129"/><circle cx="600" cy="470" r="128" fill="#12331F"/></svg>`;
+      assert.equal(await badgePng(blank, 1200), null, "a render with no text is refused");
+      assert.equal(typeof looksRendered, "function");
+      ok("a badge whose text did not draw is refused rather than served");
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");
