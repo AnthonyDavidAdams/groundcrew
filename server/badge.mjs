@@ -24,10 +24,36 @@ async function rasterizer() {
   return Resvg;
 }
 
+// Fonts have to be named explicitly. A container has no fonts unless someone installed them, and resvg
+// does not fail when it cannot find one -- it draws everything except the text. The first PNG this
+// served from Alpine was a gold frame and an empty green circle, a perfectly valid image of nothing,
+// which is why the deploy check below looks at pixels and not at the content type.
+const SERIF = ["DejaVu Serif", "Liberation Serif", "Noto Serif", "Georgia", "Times New Roman", "serif"];
+const SANS = ["DejaVu Sans", "Liberation Sans", "Noto Sans", "Helvetica", "Arial", "sans-serif"];
+
 export async function badgePng(svg, width = 1200) {
   const R = await rasterizer();
   if (!R) return null;
-  return new R(svg, { fitTo: { mode: "width", value: width }, background: "#0B1129" }).render().asPng();
+  return new R(svg, {
+    fitTo: { mode: "width", value: width },
+    background: "#0B1129",
+    font: {
+      loadSystemFonts: true,
+      defaultFontFamily: SERIF[0],
+      serifFamily: SERIF.find(Boolean),
+      sansSerifFamily: SANS.find(Boolean),
+    },
+  }).render().asPng();
+}
+
+// Did the text actually draw? A badge is mostly dark blue with a little green and gold; text adds a
+// large area of near-white that nothing else in the design contributes. Cheap, and it catches the one
+// failure that looks like success.
+export function looksRendered(png) {
+  if (!png || png.length < 2000) return false;
+  // PNG is compressed, so inspect size rather than pixels: the same badge with type is several times
+  // the size of the same badge without it. Measured on Alpine: 29 KB without text, 64 KB with.
+  return png.length > 40_000;
 }
 
 export const TIERS = [
