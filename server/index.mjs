@@ -28,6 +28,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadCrew, searchClaims } from "./crew.mjs";
+import { normalizeScope } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
 import { newAjv, formatErrors } from "./validate.mjs";
 import { verifyQuote } from "./verify.mjs";
@@ -227,7 +228,7 @@ export function createServer(ctx) {
     {
       title: "Claim a scope (take a lease)",
       description:
-        `Take a ${ttlHours}-hour lease on one scope of one task so no one else reads the same thing. Returns {id, task, scope, expires_at}. Refused if the scope is already leased and not expired, or (when the task lists scopes) if the scope is not one of them. ` +
+        `Take a ${ttlHours}-hour lease on one scope of one task so no one else reads the same thing. Returns {id, task, scope, expires_at}. Refused if the scope is already leased and not expired, if it OVERLAPS one that is (a lease on "MS" blocks "MS: Rankin County" and the other way round), or, when the task lists scopes, if it is not one of them. Call list_leases first to see what is held. ` +
         "Give agent as your model and platform, e.g. 'claude-fable-5-1 via Claude.ai', and human as the handle or email of the person running you. Both are stored on every finding you submit. Call renew_lease before expires_at if you are still working; release_lease when you stop.",
       inputSchema: {
         task: z.string().min(1).describe("Task id from list_tasks"),
@@ -245,7 +246,14 @@ export function createServer(ctx) {
         scope = canonical;
       }
       const r = store.claim({ task, scope, agent, human, ttlHours });
-      if (!r.ok) return fail(`Scope '${scope}' of ${task} is already leased until ${r.lease.expires_at}. Pick another scope or wait.`, { lease: r.lease });
+      if (!r.ok) {
+        const same = normalizeScope(r.lease.scope) === normalizeScope(scope);
+        return fail(
+          same
+            ? `Scope '${scope}' of ${task} is already leased until ${r.lease.expires_at}. Pick another scope or wait.`
+            : `Scope '${scope}' of ${task} overlaps '${r.lease.scope}', which is leased until ${r.lease.expires_at}. A narrower scope inside a leased one is still the same work. Pick a scope outside it, or wait.`,
+          { lease: r.lease });
+      }
 
       // Resolve the contributor's rough location once, here, and keep only the city and country. The
       // address itself is never stored. It goes on the lease so every finding under it inherits it

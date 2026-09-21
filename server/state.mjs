@@ -37,9 +37,13 @@ export class StateStore {
     return this.state.leases.find((l) => l.id === id) ?? null;
   }
 
+  // A lease has to conflict with the work it actually overlaps, not only with an identical string.
+  // Scopes come in at different grains -- one agent takes "MS", another takes "MS: Rankin County" --
+  // and an exact-match check lets both be held at once, which is two agents reading the same district
+  // and the protocol failing silently at the one job it has. Seen live: a whole-state Missouri lease
+  // and a per-district run of Greenville R-II, held simultaneously, neither aware of the other.
   leaseFor(task, scope, now = Date.now()) {
-    const key = normalizeScope(scope);
-    return this.activeLeases(now).find((l) => l.task === task && normalizeScope(l.scope) === key) ?? null;
+    return this.activeLeases(now).find((l) => l.task === task && scopesOverlap(l.scope, scope)) ?? null;
   }
 
   claim({ task, scope, agent, human, ttlHours = DEFAULT_LEASE_TTL_HOURS }) {
@@ -178,6 +182,25 @@ export class StateStore {
 
 export function normalizeScope(s) {
   return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// The part of a scope that names the territory, before any narrowing. "MS: Rankin County" and
+// "MS, districts A-C" both reduce to "ms"; "MS" already is "ms". Splitting on the first colon, comma
+// or dash is crude, and it is crude in the safe direction: it can only ever make two scopes look MORE
+// alike, and the cost of a false conflict is one contributor picking a different slice, while the cost
+// of a missed one is duplicated work nobody notices.
+export function scopeRoot(s) {
+  return normalizeScope(String(s ?? "").split(/[:,]|\s+-\s+/)[0]);
+}
+
+// Two scopes overlap when they are the same, or when one is a narrowing of the other.
+export function scopesOverlap(a, b) {
+  const na = normalizeScope(a), nb = normalizeScope(b);
+  if (na === nb) return true;
+  const ra = scopeRoot(a), rb = scopeRoot(b);
+  if (!ra || !rb) return false;
+  // "ms" contains "ms: rankin county"; "ms: rankin" and "ms: hinds" do not contain each other.
+  return (na === ra && rb === ra) || (nb === rb && ra === rb);
 }
 
 export function publicLease(l) {

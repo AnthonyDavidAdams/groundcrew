@@ -318,6 +318,19 @@ A test claim.
       ok("a badge whose text did not draw is refused rather than served");
     }
 
+    // A lease has to block the work it overlaps, not only an identical string. Two agents held "MO" and
+    // a Missouri district at the same time in production because this check was an equality test.
+    {
+      const wide = parse(await hc.callTool({ name: "claim_task", arguments: { task: "record-scan", scope: "ZZ", agent: "test", human: "tester@example.org" } }));
+      assert.ok(wide.id, "a wide scope can be claimed");
+      const narrow = await hc.callTool({ name: "claim_task", arguments: { task: "record-scan", scope: "ZZ: Some District", agent: "test", human: "other@example.org" } });
+      assert.equal(narrow.isError, true, "a scope inside a leased one is refused");
+      assert.match(narrow.content[0].text, /overlaps/);
+      const elsewhere = parse(await hc.callTool({ name: "claim_task", arguments: { task: "record-scan", scope: "YY: Some District", agent: "test", human: "other@example.org" } }));
+      assert.ok(elsewhere.id, "a scope outside the leased one is still available");
+      ok("a lease blocks a narrower scope inside it, and does not block one outside it");
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");
