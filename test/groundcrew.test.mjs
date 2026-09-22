@@ -348,6 +348,19 @@ A test claim.
       ok("a second finding for the same record supersedes the first instead of queueing beside it")
     }
 
+    // The egress pool is optional and must be invisible when unset: a server with no proxies configured
+    // behaves exactly as before, which is the only property worth asserting without real proxies.
+    {
+      const { egressFetch, proxyCount } = await import("../server/egress.mjs")
+      assert.equal(proxyCount(), 0, "no proxies configured in the test environment")
+      const f = egressFetch()
+      const r = await f(`http://127.0.0.1:${port}/healthz`)
+      assert.equal(r.status, 200, "egressFetch with an empty pool is a plain fetch")
+      const h = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()
+      assert.equal(h.egress_proxies, 0, "healthz reports the pool size so a deploy can be checked")
+      ok("the egress pool is a no-op when none is configured, and healthz reports its size")
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");

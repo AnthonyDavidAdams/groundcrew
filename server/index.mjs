@@ -14,6 +14,7 @@
 import { existsSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { badgeFor, badgeSvg, badgePng, TIERS } from "./badge.mjs";
+import { egressFetch, proxyCount } from "./egress.mjs";
 import { handle as handleOf } from "./activity.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -1012,7 +1013,7 @@ export async function loadCrewTools(server, ctx) {
   try {
     const mod = await import(pathToFileURL(file).href);
     if (typeof mod.registerTools !== "function") return [];
-    const names = await mod.registerTools(server, ctx, { z, text, fail, documents: ctx.documents, searchDoc, tableOfContents, pageRange });
+    const names = await mod.registerTools(server, ctx, { z, text, fail, documents: ctx.documents, searchDoc, tableOfContents, pageRange, egressFetch, proxyCount });
     return Array.isArray(names) ? names : [];
   } catch (err) {
     console.error(`crew tools.mjs failed to load: ${err.message}`);
@@ -1073,6 +1074,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
         claims: ctx.crew.claims.length,
         tasks: ctx.crew.tasks.length,
         leases_active: ctx.store.activeLeases().length,
+        egress_proxies: proxyCount(),
         pending: ctx.store.state.findings.filter((f) => f.status === "pending").length,
       });
     }
