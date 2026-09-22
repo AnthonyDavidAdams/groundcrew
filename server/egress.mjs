@@ -13,7 +13,10 @@
 // Configure with EGRESS_PROXIES: a comma-separated list of proxy URLs, e.g.
 //   EGRESS_PROXIES=http://user:pass@host1:8080,http://user:pass@host2:8080
 // With none set, everything goes out directly and nothing about the server changes.
-import { ProxyAgent } from "undici";
+// undici's own fetch, not the global one. Node's built-in fetch carries its own bundled copy of undici
+// and rejects a ProxyAgent built from the npm package with UND_ERR_INVALID_ARG -- two undici instances,
+// one dispatcher. The server reported a working pool and every proxied request failed.
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const parseList = (s) => String(s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 
@@ -47,7 +50,8 @@ export function nextDispatcher() {
 export function egressFetch(fetchImpl = fetch) {
   return (url, init = {}) => {
     const dispatcher = nextDispatcher();
-    return fetchImpl(url, dispatcher ? { ...init, dispatcher } : init);
+    // Only undici's own fetch accepts this dispatcher; with no pool, use whatever the caller passed.
+    return dispatcher ? undiciFetch(url, { ...init, dispatcher }) : fetchImpl(url, init);
   };
 }
 
