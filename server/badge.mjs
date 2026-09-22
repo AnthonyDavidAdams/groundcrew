@@ -113,6 +113,8 @@ export function badgeFor(ctx, { human, agent } = {}) {
   const rep = ctx.store.contributor({ human, agent });
   // Same salt the activity feed uses, so one person has one handle everywhere on this crew.
   const id = handle(human ?? agent ?? "", ctx.crew.name ?? "");
+  // Approved findings only, and superseded ones never count: a contributor who corrected a record twice
+  // recorded one district, not three.
   const rows = ctx.store.state.findings.filter((f) => f.status === "approved" && (human ? f.human === human : true) && (agent ? f.agent === agent : true));
   // A district counts once however many times it was submitted, and children are only counted where
   // the record carries a federal figure for that district.
@@ -123,7 +125,11 @@ export function badgeFor(ctx, { human, agent } = {}) {
     const key = r.nces_id || `${r.state}|${String(r.name ?? "").toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (Number.isFinite(r.crdc_students_latest)) children += r.crdc_students_latest;
+    // The figure the record carries, under whichever name the crew's schema gives it. Findings
+    // submitted before a crew started joining federal counts simply have none, which is why a badge can
+    // legitimately read zero children beside a real district count.
+    const n = r.crdc_students_latest ?? r.students ?? r.students_2023_24 ?? null;
+    if (Number.isFinite(n)) children += n;
   }
   const claimed = ctx.store.state.badges?.[id] ?? null;
   return {

@@ -331,6 +331,23 @@ A test claim.
       ok("a lease blocks a narrower scope inside it, and does not block one outside it");
     }
 
+    // One pending finding per record. A ten-agent fleet submitted Lamar County three times and
+    // Enterprise City twice with opposite statuses, all under one lease, and a reviewer had to guess.
+    {
+      const lease = parse(await hc.callTool({ name: "claim_task", arguments: { task: "record-scan", scope: "WW", agent: "test", human: "dupe@example.org" } }))
+      const rec = { region: "WW", name: "Same District", external_id: "9999999", status: "unknown", last_verified: "2026-09-21" }
+      const first = parse(await hc.callTool({ name: "submit_finding", arguments: { task: "record-scan", lease_id: lease.id, record: rec } }))
+      assert.equal(first.status, "pending")
+      const second = parse(await hc.callTool({ name: "submit_finding", arguments: { task: "record-scan", lease_id: lease.id, record: { ...rec, notes: "corrected" } } }))
+      assert.equal(second.status, "pending")
+      assert.deepEqual(second.supersedes, [first.id], "the second submission supersedes the first")
+      const pend = parse(await hc.callTool({ name: "list_pending", arguments: { task: "record-scan" } }))
+      const forThis = pend.findings.filter((f) => f.record?.external_id === "9999999")
+      assert.equal(forThis.length, 1, "only the newer one is pending")
+      assert.equal(forThis[0].record.notes, "corrected", "and it is the newer one")
+      ok("a second finding for the same record supersedes the first instead of queueing beside it")
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");

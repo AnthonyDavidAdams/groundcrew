@@ -420,6 +420,32 @@ export function createServer(ctx) {
         });
       }
 
+      // One pending finding per record. A lease stops two contributors reading the same district; it
+      // does nothing about one contributor's own agents, and a ten-agent fleet duplicated itself badly:
+      // Lamar County submitted three times, Enterprise City twice with OPPOSITE statuses, all under one
+      // lease. A reviewer then opens a queue where one district asserts two different things.
+      //
+      // A resubmission is usually a correction, so the newer one wins and the older is superseded
+      // rather than refused -- refusing would make a contributor who found a mistake unable to fix it.
+      // What is refused is nothing; what is prevented is two of the same thing sitting pending.
+      // This is a generic server, so identity cannot assume one crew's field names. An authoritative id
+      // is best; failing that, the unit's name inside its region. Both are conventions the record
+      // schemas here already use -- external_id/region in the template, nces_id/state in the campaign.
+      const identity = (rec) => {
+        const id = rec?.external_id ?? rec?.nces_id ?? rec?.id ?? null;
+        if (id !== null && id !== undefined && String(id).trim()) return `id:${String(id).trim()}`;
+        const region = rec?.region ?? rec?.state ?? "";
+        return `name:${String(region).trim().toLowerCase()}|${String(rec?.name ?? "").trim().toLowerCase()}`;
+      };
+      const mine = identity(record);
+      const superseded = store.state.findings.filter(
+        (f) => f.status === "pending" && f.task === task && identity(f.record) === mine
+      );
+      for (const old of superseded) {
+        old.status = "superseded";
+        old.review = { decision: "superseded", reviewer: "server", note: `replaced by a later submission for the same record`, at: new Date().toISOString() };
+      }
+
       const now = new Date().toISOString();
       const finding = {
         id: newId("finding"),
@@ -439,6 +465,7 @@ export function createServer(ctx) {
         review: null,
       };
       delete finding.source_check.ok;
+      if (superseded.length) finding.supersedes = superseded.map((f) => f.id);
 
       if (autoMerge.enabled && check.status !== "agent_text") {
         const rep = store.contributor({ human: lease.human });
@@ -449,7 +476,7 @@ export function createServer(ctx) {
       }
       store.addFinding(finding);
       const QUOTE_CHECK = { matched: "server_fetch", cached: "cached_text", agent_text: "agent_supplied", skipped: "none" };
-      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, next: finding.status === "pending" ? "A maintainer will review it. Submit the next record under the same lease." : "Merged." });
+      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
     }
   );
 
