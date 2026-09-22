@@ -303,8 +303,8 @@ A test claim.
 
     const pngRes = await fetch(`http://127.0.0.1:${port}${claimed.image.replace(/\.svg$/, ".png")}`);
     assert.equal(pngRes.headers.get("content-type"), "image/png");
-    const bytes = Buffer.from(await pngRes.arrayBuffer());
-    assert.equal(bytes.subarray(1, 4).toString(), "PNG");
+    const head = Buffer.from(await pngRes.arrayBuffer()).subarray(0, 8);
+    assert.equal(head.subarray(1, 4).toString(), "PNG");
     ok("the badge is also served as a PNG, which is what social cards need");
 
     // The failure that looks like success: a container with no fonts renders every shape and no text,
@@ -313,7 +313,7 @@ A test claim.
     {
       const { badgePng, looksRendered } = await import("../server/badge.mjs");
       const blank = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200"><rect width="1200" height="1200" fill="#0B1129"/><circle cx="600" cy="470" r="128" fill="#12331F"/></svg>`;
-      assert.equal(await badgePng(blank, 1200), null, "a render with no text is refused");
+      assert.equal(await badgePng(blank, 300), null, "a render with no text is refused");
       assert.equal(typeof looksRendered, "function");
       ok("a badge whose text did not draw is refused rather than served");
     }
