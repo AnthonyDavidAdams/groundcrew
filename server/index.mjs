@@ -33,6 +33,7 @@ import { normalizeScope } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
 import { newAjv, formatErrors } from "./validate.mjs";
 import { verifyQuote } from "./verify.mjs";
+import { ATTRIBUTION as CREW_ATTRIBUTION, BRAND_LINE } from "./brand.mjs";
 
 // Read from package.json so a deploy cannot report a version it is not running.
 const require_ = createRequire(import.meta.url);
@@ -189,7 +190,8 @@ export function createServer(ctx) {
         lease_ttl_hours: ttlHours,
         auto_merge: autoMerge.enabled ? { min_approved: autoMerge.min_approved, min_approval_rate: autoMerge.min_approval_rate } : false,
         counts: { claims: crew.claims.length, tasks: crew.tasks.length, collections: Object.keys(crew.collections).length, templates: Object.keys(crew.templates).length },
-        brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth.",
+        brand: BRAND_LINE,
+        attribution: CREW_ATTRIBUTION,
       })
   );
 
@@ -1180,7 +1182,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(JSON.stringify(body));
     }
     if (url.pathname === "/" && req.method === "GET") {
-      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", crew_roster: "/crew.json", badge: "/badge/{handle}.svg or .png", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: "Ground Crew is part of EarthPilot: mission support for Spaceship Earth." });
+      return json(res, 200, { name: "groundcrew", crew: ctx.crew.name, mission: ctx.crew.mission, version: VERSION, mcp: "/mcp", health: "/healthz", activity: "/activity.json", crew_roster: "/crew.json", badge: "/badge/{handle}.svg or .png", tiles: "/tiles/{z}/{x}/{y}.png", repo: ctx.crew.crew.repo ?? null, site: ctx.crew.crew.site ?? null, brand: BRAND_LINE, attribution: CREW_ATTRIBUTION });
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");

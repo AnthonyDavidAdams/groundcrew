@@ -7,6 +7,7 @@
 // interesting part anyway: a district, a state, a document read, a policy quoted.
 
 import { createHash } from "node:crypto";
+import { ATTRIBUTION } from "./brand.mjs";
 
 export const MAX_EVENTS = 50;
 
@@ -163,6 +164,10 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     mission: crew.mission,
     site: crew.crew.site ?? null,
     repo: crew.crew.repo ?? null,
+    // Every crew carries the same line, because a crew site is built on somebody else's protocol and
+    // should say so where a visitor can see it. Served here so a crew's own pages can render it
+    // without hard-coding the wording, and so it changes everywhere at once when it changes.
+    attribution: ATTRIBUTION,
     generated_at: new Date().toISOString(),
     totals: {
       records: approved.length,

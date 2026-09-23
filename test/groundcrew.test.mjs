@@ -361,6 +361,19 @@ A test claim.
       ok("the egress pool is a no-op when none is configured, and healthz reports its size")
     }
 
+    // Every crew site carries the same attribution line, and it is served rather than hard-coded in
+    // each crew's pages, so a crew that forgets to write it cannot exist and a change to the wording
+    // reaches all of them. If this ever comes back null a crew site silently drops the credit.
+    {
+      const root = await (await fetch(`http://127.0.0.1:${port}/`)).json()
+      assert.match(root.brand, /Created with Ground Crew/, "the root endpoint states who built the machinery")
+      assert.equal(root.attribution.text, "Created with Ground Crew")
+      assert.ok(root.attribution.href, "the attribution carries a link, or a site cannot render it")
+      const act = await (await fetch(`http://127.0.0.1:${port}/activity.json`)).json()
+      assert.equal(act.attribution.text, "Created with Ground Crew", "the public feed a crew site renders from carries it too")
+      ok("every crew inherits the Ground Crew attribution from the server")
+    }
+
     // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
     // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
     // tool handler the request headers and no unit test would have noticed.
