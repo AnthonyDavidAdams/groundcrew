@@ -139,7 +139,20 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     .sort((a, b) => Date.parse(b.since ?? 0) - Date.parse(a.since ?? 0));
 
   events.sort((a, b) => Date.parse(b.at ?? 0) - Date.parse(a.at ?? 0));
-  const recent = events.slice(0, limit).map((e) => ({ ...e, ago: ago(e.at) }));
+
+  // Collapse a run of identical headlines. Nine bug reports filed in one afternoon are one thing that
+  // happened, not nine, and a feed that lists them nine times reads as broken rather than busy. The
+  // newest keeps its place and carries the count.
+  const collapsed = [];
+  for (const e of events) {
+    const prev = collapsed[collapsed.length - 1];
+    if (prev && prev.headline === e.headline && prev.kind === e.kind && prev.contributor === e.contributor) {
+      prev.repeated = (prev.repeated ?? 1) + 1;
+      continue;
+    }
+    collapsed.push({ ...e });
+  }
+  const recent = collapsed.slice(0, limit).map((e) => ({ ...e, ago: ago(e.at) }));
 
   const approved = findings.filter((f) => f.status === "approved");
   const contributors = new Set(findings.map((f) => handle(f.human, salt)).filter(Boolean));
