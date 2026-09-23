@@ -121,6 +121,23 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     });
   }
 
+  // Who is working right now, as distinct from what has happened. A lease that is unexpired and
+  // unreleased is somebody's agent mid-scope, and that is the thing a room full of people watching a
+  // map wants to see: not a history, a present tense.
+  const now = Date.now();
+  const live = leases
+    .filter((l) => !l.released_at && Date.parse(l.expires_at ?? 0) > now)
+    .map((l) => ({
+      scope: l.scope ?? null,
+      task: l.task ?? null,
+      agent: safeAgent(l.agent),
+      contributor: handle(l.human, salt),
+      place: placeOf(l.place),
+      since: l.claimed_at ?? l.created_at ?? null,
+      expires_at: l.expires_at ?? null,
+    }))
+    .sort((a, b) => Date.parse(b.since ?? 0) - Date.parse(a.since ?? 0));
+
   events.sort((a, b) => Date.parse(b.at ?? 0) - Date.parse(a.at ?? 0));
   const recent = events.slice(0, limit).map((e) => ({ ...e, ago: ago(e.at) }));
 
@@ -144,6 +161,7 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     },
     scopes: [...scopes].sort(),
     events: recent,
+    live,
     places: [...new Set(events.map((e) => e.place && e.place.label).filter(Boolean))].slice(0, 20),
     map: {
       tiles: "/tiles/{z}/{x}/{y}.png",
