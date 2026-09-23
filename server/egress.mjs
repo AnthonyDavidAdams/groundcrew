@@ -47,11 +47,31 @@ export function nextDispatcher() {
 
 // A fetch that spreads itself across the pool. Identical to fetch when no pool is configured, so this
 // can be used everywhere without a branch at each call site.
+// Residential bandwidth is billed by the gigabyte and most requests do not need it, so the pool is a
+// fallback and not a default. Go direct; if the answer looks like a block, try again through a proxy.
+// A TASB policy page is about 880 KB, so routing a few hundred districts through the pool by habit
+// would spend real money for an answer the open internet was already giving.
+const BLOCKED = /Pardon Our Interruption|_Incapsula_Resource|Client Challenge|Just a moment\.\.\./i;
+const blockedStatus = (s) => s === 403 || s === 429 || s === 503;
+
+let direct = 0, viaProxy = 0, proxyBytes = 0;
+export const egressStats = () => ({ direct, via_proxy: viaProxy, proxy_kb: Math.round(proxyBytes / 1024) });
+
 export function egressFetch(fetchImpl = fetch) {
-  return (url, init = {}) => {
+  return async (url, init = {}) => {
+    if (!proxies().length) return fetchImpl(url, init);
+    try {
+      const res = await fetchImpl(url, init);
+      if (!blockedStatus(res.status)) {
+        const body = await res.text();
+        if (!BLOCKED.test(body.slice(0, 4000))) { direct++; return new Response(body, { status: res.status, headers: res.headers }); }
+      }
+    } catch { /* fall through to the pool */ }
     const dispatcher = nextDispatcher();
-    // Only undici's own fetch accepts this dispatcher; with no pool, use whatever the caller passed.
-    return dispatcher ? undiciFetch(url, { ...init, dispatcher }) : fetchImpl(url, init);
+    const res = await undiciFetch(url, { ...init, dispatcher });
+    const body = await res.text();
+    viaProxy++; proxyBytes += body.length;
+    return new Response(body, { status: res.status, headers: res.headers });
   };
 }
 

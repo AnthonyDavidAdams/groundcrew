@@ -14,7 +14,7 @@
 import { existsSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { badgeFor, badgeSvg, badgePng, TIERS } from "./badge.mjs";
-import { egressFetch, proxyCount } from "./egress.mjs";
+import { egressFetch, proxyCount, egressStats } from "./egress.mjs";
 import { handle as handleOf } from "./activity.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -1075,6 +1075,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
         tasks: ctx.crew.tasks.length,
         leases_active: ctx.store.activeLeases().length,
         egress_proxies: proxyCount(),
+        egress: egressStats(),
         pending: ctx.store.state.findings.filter((f) => f.status === "pending").length,
       });
     }
