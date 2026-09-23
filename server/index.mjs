@@ -260,7 +260,7 @@ export function createServer(ctx) {
       // address itself is never stored. It goes on the lease so every finding under it inherits it
       // without another lookup, and so that a contributor who works for hours is located once.
       try {
-        const ip = clientIp(extra?.requestInfo?.headers ?? {});
+        const ip = clientIp(ctx.requestHeaders ?? extra?.requestInfo?.headers ?? {});
         const place = await lookupPlace(ip, { fetchImpl: ctx.fetchImpl });
         if (place) store.updateLease?.(r.lease.id, { place });
         if (place) r.lease.place = place;
@@ -1184,8 +1184,12 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
     }
     if (url.pathname !== "/mcp") return json(res, 404, { error: "not found" });
     if (req.method !== "POST") return rpcErr(res, 405, "Method not allowed; this server is stateless, POST JSON-RPC to /mcp");
-    const server = createServer(ctx);
-  await loadCrewTools(server, ctx);
+    // The SDK version here never populates extra.requestInfo, so a tool handler cannot see the request
+    // headers and every lease was being stored without a location -- the live map had agents on it and
+    // nothing to draw. A fresh server is built per request anyway, so hand it the headers directly.
+    const reqCtx = { ...ctx, requestHeaders: req.headers };
+    const server = createServer(reqCtx);
+    await loadCrewTools(server, reqCtx);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     try {

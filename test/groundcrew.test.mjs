@@ -361,6 +361,21 @@ A test claim.
       ok("the egress pool is a no-op when none is configured, and healthz reports its size")
     }
 
+    // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
+    // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
+    // tool handler the request headers and no unit test would have noticed.
+    {
+      const r = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "x-forwarded-for": "8.8.8.8" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "claim_task", arguments: { task: "record-scan", scope: "GEO", agent: "geo test", human: "geo@example.org" } } }),
+      })
+      const line = (await r.text()).split("\n").find((l) => l.startsWith("data: "))
+      const lease = JSON.parse(JSON.parse(line.slice(6)).result.content[0].text)
+      assert.ok(lease.place && lease.place.country_code, `a lease resolves a place from the forwarded address, got ${JSON.stringify(lease.place)}`)
+      ok(`a claim records where it came from (${lease.place.label})`)
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");
