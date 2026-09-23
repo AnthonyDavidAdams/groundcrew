@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One unit's status (example schema; replace with your crew's)",
+  "type": "object",
+  "required": ["name", "status", "last_verified"],
+  "properties": {
+    "name": { "type": "string", "description": "The unit, e.g. a district, county, hospital, or employer" },
+    "region": { "type": ["string", "null"], "description": "The scope this unit belongs to, e.g. a state code" },
+    "external_id": { "type": ["string", "null"], "description": "An id from an authoritative registry, so records can be joined" },
+    "status": { "enum": ["allows", "bans", "conditional", "unknown"] },
+    "source": { "type": ["string", "null"], "format": "uri", "description": "URL of the official document that establishes the status" },
+    "quote": { "type": ["string", "null"], "description": "Verbatim sentence from the source that establishes the status" },
+    "last_verified": { "type": "string", "format": "date" },
+    "notes": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["allows", "bans", "conditional"] } } },
+      "then": { "required": ["source", "quote"] }
+    }
+  ]
+}

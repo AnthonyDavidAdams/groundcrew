@@ -1,0 +1,33 @@
+# The crew's task queue. Each task becomes an MCP prompt of the same name; `schema` is the JSON schema every
+# finding for the task must satisfy; `skill` is the Markdown that runs it. Paths are relative to this crew directory.
+tasks:
+  - id: record-scan
+    title: Record scan
+    description: For one scope, find the official document that establishes each unit's status, record the status with source URL and verbatim quote.
+    unit: One region, or a named slice of one
+    output: One file per unit in data/records/<external_id>.json
+    priority: 1
+    schema: data/schema/record.schema.json
+    skill: skills/record-scan/SKILL.md
+    collection: records
+    # The units this task is handed out in. List them and the server assigns the next free one to
+    # anyone who asks for work, which is how a contributor gets started without having to choose, and
+    # how twenty people work at once without colliding. Omit them and a scope can be any string, but
+    # then every contributor has to pick one and handle being refused.
+    scopes: [AL, AR, MS, WW, YY, ZZ, GEO]
+    done_means:
+      - Every non-unknown status has source, quote, and last_verified.
+      - Notes say what was searched for every unknown.
+
+  - id: verify-claim
+    title: Verify a claim
+    description: Open the primary source for a `reported` claim in facts/claims and upgrade it to `verified` or mark it `disputed` with reasons.
+    unit: One claim file
+    output: A claim record for facts/claims/<id>.md
+    priority: 2
+    schema: data/schema/claim.schema.json
+    skill: skills/verify-claim/SKILL.md
+    collection: claims
+    done_means:
+      - The primary source was opened and the claim sentence matches it.
+      - last_verified is today; verified_by names the agent and the person.

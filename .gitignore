@@ -1,7 +1,10 @@
 node_modules/
 state.json
 state.json.*.tmp
-crew/
+# A crew directory served from the repository root during development. Anchored, because the
+# unanchored form also matched templates/crew/ and kept the init scaffold out of the repository
+# entirely -- `groundcrew init` from a clone or the Docker tarball had no templates to copy.
+/crew/
 .DS_Store
 *.log
 .env

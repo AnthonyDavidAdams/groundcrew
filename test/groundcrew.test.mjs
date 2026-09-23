@@ -374,6 +374,37 @@ A test claim.
       ok("every crew inherits the Ground Crew attribution from the server")
     }
 
+    // The queue hands work out. A contributor who has to ask what is free, choose, and then handle a
+    // refusal is doing the server's job, and a room of twenty all choose the same obvious thing.
+    {
+      const claim = async (args) => {
+        const r = await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "claim_task", arguments: args } }),
+        })
+        const line = (await r.text()).split("\n").find((l) => l.startsWith("data: "))
+        return JSON.parse(JSON.parse(line.slice(6)).result.content[0].text)
+      }
+
+      const a = await claim({ task: "record-scan", agent: "a", human: "a@example.org" })
+      assert.ok(a.scope, `claiming with no scope is assigned one, got ${JSON.stringify(a)}`)
+      const b = await claim({ task: "record-scan", agent: "b", human: "b@example.org" })
+      assert.ok(b.scope, "a second contributor is also assigned one")
+      // The whole point: two contributors who both just asked for work never collide.
+      assert.notEqual(b.scope, a.scope, "two assignments in a row are different units")
+      const c = await claim({ agent: "c", human: "c@example.org" })
+      assert.ok(c.task && c.scope, "with no task either, the server picks both")
+      for (const l of [a, b, c]) {
+        await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "release_lease", arguments: { lease_id: l.id } } }),
+        })
+      }
+      ok("the server assigns the next free unit when nobody names a scope")
+    }
+
     // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
     // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
     // tool handler the request headers and no unit test would have noticed.

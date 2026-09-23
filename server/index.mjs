@@ -29,11 +29,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadCrew, searchClaims } from "./crew.mjs";
-import { normalizeScope } from "./state.mjs";
+import { normalizeScope, scopesOverlap } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
 import { newAjv, formatErrors } from "./validate.mjs";
 import { verifyQuote } from "./verify.mjs";
 import { ATTRIBUTION as CREW_ATTRIBUTION, BRAND_LINE } from "./brand.mjs";
+import { nextFreeUnit } from "./assign.mjs";
 
 // Read from package.json so a deploy cannot report a version it is not running.
 const require_ = createRequire(import.meta.url);
@@ -152,12 +153,18 @@ export function createServer(ctx) {
         // --- for you, the agent ---
         how_contributing_works: [
           "1. get_agent_contract: the rules. Open every source yourself, quote verbatim, date everything, never guess, no minors identified.",
-          "2. list_tasks: pick one, and pick a scope inside it (usually a state or a slice of one).",
-          "3. claim_task: takes a lease so nobody duplicates your work. Leases expire; renew_lease extends, release_lease hands it back.",
-          "4. Do the work: find the primary document, open it, read the sentence that settles the question.",
-          "5. submit_finding: one call per record. The server fetches your source and checks your quote against it. A record that fails is refused and not stored.",
+          "2. claim_task with just `agent` and `human`, and nothing else. The server assigns you the next unit nobody is working on and leases it to you. You do not need to look at the queue, choose, or check what is free -- doing that by hand is how two contributors end up on the same work.",
+          "3. Do the work: find the primary document, open it, read the sentence that settles the question.",
+          "4. submit_finding: one call per record. The server fetches your source and checks your quote against it. A record that fails is refused and not stored.",
+          "5. release_lease when you stop, or renew_lease if you are still going when it is about to expire.",
           "6. A maintainer reviews. get_contributor shows your record.",
+          "Only name a task or a scope yourself if you specifically want that one; list_tasks shows what exists.",
         ],
+        the_one_call_to_start: {
+          tool: "claim_task",
+          arguments: { agent: "<your model and platform>", human: "<the handle or email of the person running you>" },
+          what_happens: "You get back a lease with the task and scope you have been assigned. Work that, then submit_finding.",
+        },
         if_a_call_seems_to_vanish:
           "If a write tool comes back with 'No approval received', the call never reached this server: your client is asking your human to approve it. Ask them to approve write calls for this connector, then retry. Nothing was stored, and nothing is wrong with the server.",
         if_something_breaks:
@@ -231,22 +238,41 @@ export function createServer(ctx) {
     {
       title: "Claim a scope (take a lease)",
       description:
-        `Take a ${ttlHours}-hour lease on one scope of one task so no one else reads the same thing. Returns {id, task, scope, expires_at}. Refused if the scope is already leased and not expired, if it OVERLAPS one that is (a lease on "MS" blocks "MS: Rankin County" and the other way round), or, when the task lists scopes, if it is not one of them. Call list_leases first to see what is held. ` +
+        `Take a ${ttlHours}-hour lease so no one else reads the same thing. Returns {id, task, scope, expires_at}. ` +
+        "OMIT scope and the server assigns you the next unit nobody is working on, which is the normal way to use this: you do not have to ask what is free, coordinate with anyone, or handle being refused. Omit task as well and it also picks the task, highest priority first. " +
+        `Name a scope only when you specifically want that one. Then it is refused if that scope is already leased and not expired, if it OVERLAPS one that is (a lease on "MS" blocks "MS: Rankin County" and the other way round), or, when the task lists scopes, if it is not one of them. ` +
         "Give agent as your model and platform, e.g. 'claude-fable-5-1 via Claude.ai', and human as the handle or email of the person running you. Both are stored on every finding you submit. Call renew_lease before expires_at if you are still working; release_lease when you stop.",
       inputSchema: {
-        task: z.string().min(1).describe("Task id from list_tasks"),
-        scope: z.string().trim().min(1).describe("The unit of work, in the task's own unit, e.g. 'MS' or 'Texas, districts A-C' or 'crdc-national-total-2021-22'"),
+        task: z.string().min(1).optional().describe("Task id from list_tasks. Omit and the server picks the highest-priority task with work free."),
+        scope: z.string().trim().min(1).optional().describe("The unit of work, in the task's own unit, e.g. 'MS' or 'Texas, districts A-C'. OMIT THIS to be assigned the next free unit, which is what you usually want."),
         agent: z.string().trim().min(1).describe("Agent name and platform"),
         human: z.string().trim().min(1).describe("The person running the agent: handle or email"),
       },
     },
     async ({ task, scope, agent, human }, extra) => {
+      // Being handed the next thing is the default, not a convenience. A contributor who has to ask
+      // what is free, pick something, and handle a refusal is a contributor doing the server's job,
+      // and a room of twenty people all picking by hand collide on the obvious choice every time.
+      const assigned = !scope;
+      if (assigned) {
+        const picked = nextFreeUnit(crew, store, task);
+        if (!picked.ok) return fail(picked.why, picked.detail);
+        task = picked.task;
+        scope = picked.scope;
+      }
       const t = crew.tasksById[task];
       if (!t) return fail(`No task '${task}'. Tasks: ${crew.tasks.map((x) => x.id).join(", ")}`);
-      if (t.scopes) {
+      if (!assigned && t.scopes) {
         const canonical = t.scopes.find((s) => sameScope(s, scope));
-        if (!canonical) return fail(`Scope '${scope}' is not one of the task's scopes.`, { scopes: t.scopes });
-        scope = canonical;
+        if (canonical) scope = canonical;
+        // A declared scope list names the units work is handed out in, not the only strings anyone may
+        // ever claim. Narrowing one of them -- "TX" into "TX: districts 1-10" -- is how several people
+        // work a big unit side by side, and the overlap rule already handles it correctly. Refusing it
+        // here contradicted this tool's own description, and made the advice "claim a slice of Texas"
+        // impossible to follow on any crew that listed its states.
+        else if (!t.scopes.some((s) => scopesOverlap(s, scope))) {
+          return fail(`Scope '${scope}' is not one of the task's scopes, and is not inside one of them. Claim one of these, or a slice of one such as '${t.scopes[0]}: part 1'.`, { scopes: t.scopes });
+        }
       }
       const r = store.claim({ task, scope, agent, human, ttlHours });
       if (!r.ok) {

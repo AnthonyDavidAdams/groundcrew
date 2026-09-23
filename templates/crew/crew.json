@@ -1,0 +1,20 @@
+{
+  "name": "{{name}}",
+  "mission": "{{mission}}",
+  "repo": "",
+  "site": "",
+  "contact": "",
+  "maintainer_token_env": "GROUNDCREW_MAINTAINER_TOKEN",
+  "lease_ttl_hours": 4,
+  "auto_merge": {
+    "enabled": false,
+    "min_approved": 10,
+    "min_approval_rate": 0.9
+  },
+  "collections": {
+    "records": "data/schema/record.schema.json"
+  },
+  "title": "Your crew's display name",
+  "description": "One line shown under the name in a connector list.",
+  "icons": []
+}
