@@ -109,7 +109,16 @@ export class DocumentCache {
     } else if (type.includes("html") || /<\/?[a-z][^>]*>/i.test(buf.toString("utf8").slice(0, 2000))) {
       pages = [htmlToText(buf.toString("utf8"))]; extracted_by = "html";
     } else {
-      pages = [buf.toString("utf8")];
+      const decoded = buf.toString("utf8");
+      // Anything left is being guessed at. Decoding arbitrary bytes as UTF-8 always "succeeds": a
+      // gzip stream or a Google Docs editor payload comes back as a wall of replacement characters,
+      // which then flows on as extracted text and makes every search report "nothing matched". That
+      // is indistinguishable from a document that genuinely does not contain the phrase, and it is
+      // how a correct finding gets rejected for citing a source nobody could read. Refuse instead.
+      if (looksBinary(decoded)) {
+        throw new Error(`the document is not text (${type || "unknown type"}, ${buf.length} bytes); it decoded to binary, so nothing could be read from it. If this is a Google Doc, use its /export?format=pdf address rather than the /edit page.`);
+      }
+      pages = [decoded];
     }
 
     // One flat string plus where each page starts, so a character offset maps back to a page.
@@ -206,4 +215,18 @@ export function archive(url, fetchImpl = fetch) {
       return loc ? "https://web.archive.org" + loc : (r.url && r.url.includes("/web/") ? r.url : null);
     })
     .catch(() => null);
+}
+
+// Did a byte string decode into something a person could read? Counts U+FFFD replacement characters
+// and C0 control bytes, which are rare in real documents and dominate anything that was not text.
+// A threshold rather than a boolean, because a legitimate document can carry a stray control byte.
+export function looksBinary(s, sample = 4000) {
+  const head = s.slice(0, sample);
+  if (!head.length) return false;
+  let bad = 0;
+  for (const ch of head) {
+    const c = ch.codePointAt(0);
+    if (c === 0xfffd || (c < 9) || (c > 13 && c < 32)) bad++;
+  }
+  return bad / head.length > 0.05;
 }

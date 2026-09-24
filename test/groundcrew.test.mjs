@@ -405,6 +405,23 @@ A test claim.
       ok("the server assigns the next free unit when nobody names a scope")
     }
 
+    // A document that is not text must fail loudly. Decoding arbitrary bytes as UTF-8 always
+    // "succeeds", and the mojibake then flows on as extracted text so every search reports "nothing
+    // matched" -- which reads exactly like a document that does not contain the phrase. That cost a
+    // review pass: fourteen correct findings looked unverifiable because the server had turned a
+    // Google Docs editor payload into 128,000 characters of noise and answered honestly about it.
+    {
+      const { looksBinary } = await import("../server/documents.mjs")
+      const { gzipSync } = await import("node:zlib")
+      assert.equal(looksBinary(gzipSync(Buffer.from("policy text ".repeat(400))).toString("utf8")), true,
+        "a gzip stream decoded as utf8 is recognised as binary")
+      assert.equal(looksBinary("The Board authorizes corporal punishment under the following conditions:"), false,
+        "ordinary policy prose is not mistaken for binary")
+      assert.equal(looksBinary("<html><body><p>Corporal punishment may be used.</p></body></html>"), false)
+      assert.equal(looksBinary(""), false, "an empty document is empty, not binary")
+      ok("a document that decodes to binary is refused rather than served as text")
+    }
+
     // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
     // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
     // tool handler the request headers and no unit test would have noticed.
