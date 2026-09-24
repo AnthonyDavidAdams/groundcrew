@@ -422,6 +422,29 @@ A test claim.
       ok("a document that decodes to binary is refused rather than served as text")
     }
 
+    // A vendor that answers one address with a stub, HTTP 200 and no challenge text, is invisible to a
+    // check that only looks for challenge pages. TASB served the production address 70,000 bytes of
+    // navigation where the same URL returns 875,000 elsewhere -- no error, none of the policy -- and
+    // two hundred Texas districts looked unreadable as a result. A caller that knows what the page must
+    // contain can say so, and a response that lacks it goes back out through the pool.
+    {
+      const { egressFetch } = await import("../server/egress.mjs")
+      const prev = process.env.EGRESS_PROXIES
+      let sawExpect = false
+      const fake = async (u, init) => {
+        // The egress layer must not leak `expect` into the actual request options.
+        if (init && "expect" in init) sawExpect = true
+        return new Response("<html><nav>menu</nav></html>", { status: 200 })
+      }
+      process.env.EGRESS_PROXIES = ""
+      const noPool = egressFetch(fake)
+      const body = await (await noPool("https://example.com/p", { expect: (b) => b.includes("FO(LOCAL)") })).text()
+      assert.match(body, /menu/, "with no pool configured the direct response is still returned")
+      assert.equal(sawExpect, false, "`expect` is consumed by the egress layer, never sent to the server")
+      process.env.EGRESS_PROXIES = prev ?? ""
+      ok("a caller can say what a good response must contain, and expect never reaches the wire")
+    }
+
     // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
     // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
     // tool handler the request headers and no unit test would have noticed.

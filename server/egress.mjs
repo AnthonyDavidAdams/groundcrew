@@ -58,17 +58,25 @@ let direct = 0, viaProxy = 0, proxyBytes = 0;
 export const egressStats = () => ({ direct, via_proxy: viaProxy, proxy_kb: Math.round(proxyBytes / 1024) });
 
 export function egressFetch(fetchImpl = fetch) {
+  // `init.expect` is an optional predicate over the response body: "is this the thing I asked for?".
+  // Without it the only test is whether the response looks like a challenge page, and the failure that
+  // matters most does not look like one. TASB answers Railway's address with HTTP 200 and 70,000 bytes
+  // of navigation -- 8% of the 875,000 the same URL returns elsewhere, no error, no challenge text,
+  // and none of the policy. That sailed through every check and made two hundred Texas districts look
+  // unreadable. A caller that knows what the page must contain can say so, and be routed around it.
   return async (url, init = {}) => {
-    if (!proxies().length) return fetchImpl(url, init);
+    const { expect, ...opts } = init;
+    if (!proxies().length) return fetchImpl(url, opts);
     try {
-      const res = await fetchImpl(url, init);
+      const res = await fetchImpl(url, opts);
       if (!blockedStatus(res.status)) {
         const body = await res.text();
-        if (!BLOCKED.test(body.slice(0, 4000))) { direct++; return new Response(body, { status: res.status, headers: res.headers }); }
+        const looksRight = !BLOCKED.test(body.slice(0, 4000)) && (!expect || expect(body));
+        if (looksRight) { direct++; return new Response(body, { status: res.status, headers: res.headers }); }
       }
     } catch { /* fall through to the pool */ }
     const dispatcher = nextDispatcher();
-    const res = await undiciFetch(url, { ...init, dispatcher });
+    const res = await undiciFetch(url, { ...opts, dispatcher });
     const body = await res.text();
     viaProxy++; proxyBytes += body.length;
     return new Response(body, { status: res.status, headers: res.headers });
