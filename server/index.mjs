@@ -518,6 +518,42 @@ export function createServer(ctx) {
     }
   );
 
+  // What the crew's own machinery did, so a public board can show it.
+  //
+  // A crew server only knows what came through it: leases taken, findings submitted, documents
+  // fetched. But most of the work on a mature crew is a maintainer's pipeline -- a harvester walking a
+  // vendor, a classifier reading a thousand policies -- and none of that appears, so the live board
+  // sits still on the busiest night the project has had. This records a pass in the same feed, marked
+  // as machine work rather than dressed up as a contributor.
+  server.registerTool(
+    "report_ops",
+    {
+      title: "Record what an automated pass did",
+      description:
+        "Log a batch of machine work to the public activity feed: what ran, how many units it covered, what it produced and what it cost. Requires the crew's maintainer token. This is for a maintainer's own pipelines; a contributing agent should use claim_task and submit_finding, which is what the record is built from.",
+      inputSchema: {
+        pass: z.string().trim().min(1).describe("What ran, e.g. 'tasb-harvest' or 'classify'"),
+        summary: z.string().trim().min(1).max(200).describe("One line a stranger can read, e.g. '1,011 Texas districts classified'"),
+        units: z.number().int().min(0).optional().describe("How many things it covered"),
+        produced: z.number().int().min(0).optional().describe("How many results it produced"),
+        cost_usd: z.number().min(0).optional(),
+        scope: z.string().trim().optional().describe("Where the work was, e.g. 'TX'"),
+        token: z.string().optional(),
+      },
+    },
+    async ({ pass, summary, units, produced, cost_usd, scope, token }, extra) => {
+      const expected = ctx.maintainerToken();
+      if (!expected) return fail(`This server has no maintainer token configured (set ${ctx.tokenEnv}); report_ops is disabled.`);
+      const given = token ?? bearerFrom(extra);
+      if (!given || !safeEqual(given, expected)) return fail("Maintainer token missing or wrong.");
+      const row = { id: newId("ops"), pass, summary, units: units ?? null, produced: produced ?? null,
+                    cost_usd: cost_usd ?? null, scope: scope ?? null, at: new Date().toISOString() };
+      store.state.ops = [...(store.state.ops ?? []), row].slice(-500);
+      store.save();
+      return text({ recorded: true, ...row });
+    }
+  );
+
   server.registerTool(
     "review_finding",
     {

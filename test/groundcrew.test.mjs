@@ -445,6 +445,34 @@ A test claim.
       ok("a caller can say what a good response must contain, and expect never reaches the wire")
     }
 
+    // A crew server only sees what came through it, so a maintainer's own pipeline -- the thing doing
+    // most of the work on a mature crew -- was invisible and the public board sat still on the busiest
+    // night the project had. Machine passes go in the same feed, marked as machine work rather than
+    // dressed up as a contributor, and the token is required so anyone cannot write to the feed.
+    {
+      const call = async (args) => {
+        const r = await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_ops", arguments: args } }),
+        })
+        const line = (await r.text()).split("\n").find((l) => l.startsWith("data: "))
+        return JSON.parse(line.slice(6)).result
+      }
+      const refused = await call({ pass: "x", summary: "no token" })
+      assert.ok(refused.isError, "report_ops without the maintainer token is refused")
+
+      const okRes = await call({ pass: "harvest", summary: "42 districts harvested", units: 42, produced: 40, cost_usd: 0.01, scope: "ZZ", token: TOKEN })
+      assert.ok(!okRes.isError, `report_ops with the token succeeds: ${okRes.content?.[0]?.text?.slice(0, 120)}`)
+
+      const feed = await (await fetch(`http://127.0.0.1:${port}/activity.json`)).json()
+      const m = (feed.events ?? []).find((e) => e.kind === "machine")
+      assert.ok(m, "the pass appears in the public feed")
+      assert.equal(m.headline, "42 districts harvested")
+      assert.equal(feed.totals.machine_passes, 1)
+      ok("a maintainer's automated pass shows on the public board, and only with the token")
+    }
+
     // A lease has to carry where it came from, or the live map has agents on it and nothing to draw.
     // This is asserted through the real HTTP transport, because the bug was that the SDK never gave the
     // tool handler the request headers and no unit test would have noticed.

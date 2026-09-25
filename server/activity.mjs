@@ -153,7 +153,14 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
     }
     collapsed.push({ ...e });
   }
-  const recent = collapsed.slice(0, limit).map((e) => ({ ...e, ago: ago(e.at) }));
+  // Machine passes appear in the same feed, marked as such. A board that shows only what contributors
+  // did reads as an idle project on the night the pipeline recorded a thousand districts.
+  const opsEvents = (store.state.ops ?? []).map((o) => ({
+    kind: "machine", at: o.at, headline: o.summary, scope: o.scope ?? null, pass: o.pass,
+    units: o.units, produced: o.produced, cost_usd: o.cost_usd, place: null, repeated: 1,
+  }));
+  const withOps = [...collapsed, ...opsEvents].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const recent = withOps.slice(0, limit).map((e) => ({ ...e, ago: ago(e.at) }));
 
   const approved = findings.filter((f) => f.status === "approved");
   const contributors = new Set(findings.map((f) => handle(f.human, salt)).filter(Boolean));
@@ -175,6 +182,7 @@ export function buildActivity(ctx, { limit = MAX_EVENTS } = {}) {
       contributors: contributors.size,
       scopes_touched: scopes.size,
       documents_read: (store.state.fetches ?? []).length,
+      machine_passes: (store.state.ops ?? []).length,
       claims_published: (crew.claims ?? []).filter((c) => c.status === "verified").length,
     },
     scopes: [...scopes].sort(),
