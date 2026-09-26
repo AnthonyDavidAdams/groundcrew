@@ -29,6 +29,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { registerLadderTools, nextAskLine, ladderProgress, ladderSteps } from "./ladder.mjs";
+import { buildFleet, callsign } from "./fleet.mjs";
 import { loadCrew, searchClaims } from "./crew.mjs";
 import { normalizeScope, scopesOverlap } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
@@ -507,7 +508,7 @@ export function createServer(ctx) {
       }
       store.addFinding(finding);
       const QUOTE_CHECK = { matched: "server_fetch", cached: "cached_text", agent_text: "agent_supplied", skipped: "none" };
-      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, ask: nextAskLine(store, crew, { human: lease.human }), next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
+      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, ask: nextAskLine(store, crew, { human: lease.human }), ship: { callsign: callsign(handleOf(lease.human, crew.name)), handle: handleOf(lease.human, crew.name), watch: crew.crew.site ? `${String(crew.crew.site).replace(/\/$/, "")}/live/` : null, line: `Your ship is ${callsign(handleOf(lease.human, crew.name))}. Tell your human; they can watch it fly on the live board.` }, next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
     }
   );
 
@@ -1231,6 +1232,18 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       }
       res.writeHead(200, headers);
       return res.end(svg);
+    }
+
+    // The fleet: ships, flights and one cockpit at a time. Read by the campaign's flight board.
+    if (url.pathname === "/fleet.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=15" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" }); return res.end(); }
+      if (req.method !== "GET") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET only" })); }
+      const since = url.searchParams.get("since"); const lease = url.searchParams.get("lease");
+      const limit = Math.min(Number(url.searchParams.get("limit")) || 3000, 5000);
+      let body; try { body = buildFleet(ctx, { since: since && Number.isFinite(Date.parse(since)) ? since : null, lease, limit }); }
+      catch (err) { res.writeHead(500, headers); return res.end(JSON.stringify({ error: err.message })); }
+      res.writeHead(200, headers); return res.end(JSON.stringify(body));
     }
 
     // The leaderboard: every contributor by anonymous handle, ranked by districts on the record, with
