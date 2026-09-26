@@ -28,7 +28,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { registerLadderTools, nextAskLine } from "./ladder.mjs";
+import { registerLadderTools, nextAskLine, ladderProgress, ladderSteps } from "./ladder.mjs";
 import { loadCrew, searchClaims } from "./crew.mjs";
 import { normalizeScope, scopesOverlap } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
@@ -1231,6 +1231,48 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       }
       res.writeHead(200, headers);
       return res.end(svg);
+    }
+
+    // The leaderboard: every contributor by anonymous handle, ranked by districts on the record, with
+    // the ladder rungs they have confirmed. Display names appear only where the person claimed a badge;
+    // everyone else is a handle, which is the same handle the activity feed shows. Nothing here names a
+    // person who did not choose to be named, and nothing here can be forged by writing a file: it is
+    // computed from approved findings and the actions ledger on every request.
+    if (url.pathname === "/leaderboard.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=30" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" }); return res.end(); }
+      if (req.method !== "GET") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET only" })); }
+      const weekAgo = Date.now() - 7 * 86400e3;
+      const humans = new Map();
+      for (const f of ctx.store.state.findings) { if (f.human && !humans.has(f.human)) humans.set(f.human, true); }
+      for (const a of ctx.store.state.actions ?? []) { if (a.human && !humans.has(a.human)) humans.set(a.human, true); }
+      const rows = [...humans.keys()].map((human) => {
+        const b = badgeFor(ctx, { human });
+        const mine = ctx.store.state.findings.filter((f) => f.human === human);
+        const approved = mine.filter((f) => f.status === "approved");
+        const prog = ladderProgress(ctx.store, ctx.crew, { human });
+        const days = [...new Set(mine.map((f) => String(f.timestamp ?? "").slice(0, 10)).filter(Boolean))].sort();
+        return {
+          id: b.id, display_name: b.display_name ?? null, tier: b.tier?.name ?? null,
+          districts: b.districts, children: b.children, pending: mine.filter((f) => f.status === "pending").length,
+          this_week: new Set(approved.filter((f) => Date.parse(f.timestamp ?? 0) > weekAgo).map((f) => f.record?.nces_id || f.record?.name)).size,
+          active_days: days.length, first_at: days[0] ?? null, last_at: days[days.length - 1] ?? null,
+          rungs: prog.steps.filter((s) => s.done).map((s) => s.id), next: prog.next?.id ?? null,
+          badge: b.districts ? `/badge/${b.id}.svg` : null,
+        };
+      }).filter((r) => r.districts || r.pending || r.rungs.length)
+        .sort((a, b) => b.districts - a.districts || b.this_week - a.this_week || b.pending - a.pending || String(a.id).localeCompare(String(b.id)));
+      rows.forEach((r, i) => { r.rank = i + 1; });
+      const week = [...rows].filter((r) => r.this_week).sort((a, b) => b.this_week - a.this_week).slice(0, 20).map((r) => ({ id: r.id, display_name: r.display_name, this_week: r.this_week }));
+      const approvedAll = ctx.store.state.findings.filter((f) => f.status === "approved");
+      res.writeHead(200, headers);
+      return res.end(JSON.stringify({
+        crew: ctx.crew.name, generated_at: new Date().toISOString(),
+        totals: { contributors: rows.length, records: new Set(approvedAll.map((f) => f.record?.nces_id || `${f.record?.state}|${f.record?.name}`)).size, pending: ctx.store.state.findings.filter((f) => f.status === "pending").length, this_week: approvedAll.filter((f) => Date.parse(f.timestamp ?? 0) > weekAgo).length },
+        tiers: TIERS, ladder: ladderSteps(ctx.crew).map((s) => ({ id: s.id, title: s.title })),
+        all_time: rows, this_week: week,
+        note: "Handles are anonymous and stable per crew. A display name appears only where the contributor claimed a badge (claim_badge).",
+      }));
     }
 
     // The public feed. Readable by anyone, including a browser on the crew's own website, which is
