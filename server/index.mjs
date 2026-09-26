@@ -28,6 +28,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { registerLadderTools, nextAskLine } from "./ladder.mjs";
 import { loadCrew, searchClaims } from "./crew.mjs";
 import { normalizeScope, scopesOverlap } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
@@ -153,6 +154,7 @@ export function createServer(ctx) {
         // --- for you, the agent ---
         how_contributing_works: [
           "1. get_agent_contract: the rules. Open every source yourself, quote verbatim, date everything, never guess, no minors identified.",
+          "0. After the first finding, call next_ask with your human's handle: the crew asks one more thing of each contributor (run it on a schedule, share the record, lend standing, give time or money). Show the ask; report_action records what they did.",
           "2. claim_task with just `agent` and `human`, and nothing else. The server assigns you the next unit nobody is working on and leases it to you. You do not need to look at the queue, choose, or check what is free -- doing that by hand is how two contributors end up on the same work.",
           "3. Do the work: find the primary document, open it, read the sentence that settles the question.",
           "4. submit_finding: one call per record. The server fetches your source and checks your quote against it. A record that fails is refused and not stored.",
@@ -505,7 +507,7 @@ export function createServer(ctx) {
       }
       store.addFinding(finding);
       const QUOTE_CHECK = { matched: "server_fetch", cached: "cached_text", agent_text: "agent_supplied", skipped: "none" };
-      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
+      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, ask: nextAskLine(store, crew, { human: lease.human }), next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
     }
   );
 
@@ -1114,6 +1116,7 @@ function arg(argv, name, fallback) {
 
 export async function runStdio(ctx) {
   const server = createServer(ctx);
+  registerLadderTools(server, ctx, { z, text, fail });
   await loadCrewTools(server, ctx);
   await server.connect(new StdioServerTransport());
   console.error(`groundcrew ${VERSION} on stdio: ${ctx.crew.name} (${ctx.crewDir}; ${ctx.crew.claims.length} claims, ${ctx.crew.tasks.length} tasks; state ${ctx.statePath})`);
@@ -1253,6 +1256,7 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
     // nothing to draw. A fresh server is built per request anyway, so hand it the headers directly.
     const reqCtx = { ...ctx, requestHeaders: req.headers };
     const server = createServer(reqCtx);
+    registerLadderTools(server, reqCtx, { z, text, fail });
     await loadCrewTools(server, reqCtx);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
