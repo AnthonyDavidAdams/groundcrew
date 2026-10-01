@@ -470,8 +470,12 @@ export function createServer(ctx) {
         return `name:${String(region).trim().toLowerCase()}|${String(rec?.name ?? "").trim().toLowerCase()}`;
       };
       const mine = identity(record);
+      // A later submission replaces an earlier pending one for the same record, unless the earlier one
+      // carries a quote and a source and the new one does not: a looked-at-and-found-nothing must never
+      // erase a sentence someone already found. Seen live on McComb, Mississippi.
+      const sourced = (rec) => Boolean(rec && rec.quote && rec.source);
       const superseded = store.state.findings.filter(
-        (f) => f.status === "pending" && f.task === task && identity(f.record) === mine
+        (f) => f.status === "pending" && f.task === task && identity(f.record) === mine && !(sourced(f.record) && !sourced(record))
       );
       for (const old of superseded) {
         old.status = "superseded";
