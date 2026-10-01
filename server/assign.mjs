@@ -22,9 +22,21 @@ function byPriority(tasks) {
 
 // The first scope of a task that no live lease overlaps. Scopes are handed out in the order the crew
 // declared them, so a crew that wants a particular order gets it by writing them in that order.
-function freeScope(task, held) {
+// A unit is also not free if it is already done, or if it has defeated the last two agents sent to it.
+// Without this, the first unit in the list is handed to every agent whose lease on it expired, and a
+// scheduled task spends a week claiming the same unreadable charter school every hour and filing a bug
+// each time. Seen live: Paideia Academies, Arizona, claimed thirteen times in two days.
+const norm = (s) => String(s ?? "").trim().toLowerCase();
+function spent(store, scope) {
+  const f = (store.state.findings ?? []).filter((x) => norm(x.scope) === norm(scope));
+  if (f.some((x) => x.status === "approved" || x.status === "pending")) return true;
+  const week = Date.now() - 7 * 86400e3;
+  const tries = f.filter((x) => !(x.record && x.record.quote && x.record.source) && Date.parse(x.timestamp ?? 0) > week);
+  return tries.length >= 2;
+}
+function freeScope(task, held, store) {
   if (!Array.isArray(task.scopes) || !task.scopes.length) return null;
-  return task.scopes.find((s) => !held.some((l) => scopesOverlap(l.scope, s))) ?? null;
+  return task.scopes.find((s) => !held.some((l) => scopesOverlap(l.scope, s)) && !(store && spent(store, s))) ?? null;
 }
 
 export function nextFreeUnit(crew, store, taskId) {
@@ -42,11 +54,11 @@ export function nextFreeUnit(crew, store, taskId) {
         detail: { assignable_tasks: crew.tasks.filter((x) => x.scopes?.length).map((x) => x.id) },
       };
     }
-    const scope = freeScope(t, held);
+    const scope = freeScope(t, held, store);
     if (!scope) {
       return {
         ok: false,
-        why: `Every unit of '${taskId}' is leased right now. Leases expire, so try again shortly, or omit task and take work on something else.`,
+        why: `Every unit of '${taskId}' is leased, done, or has defeated the last two agents sent to it. Try again later, or ask a maintainer to add work.`,
         detail: { leased: held.filter((l) => l.task === taskId).map((l) => ({ scope: l.scope, until: l.expires_at })) },
       };
     }
@@ -54,12 +66,12 @@ export function nextFreeUnit(crew, store, taskId) {
   }
 
   for (const t of byPriority(crew.tasks)) {
-    const scope = freeScope(t, held);
+    const scope = freeScope(t, held, store);
     if (scope) return { ok: true, task: t.id, scope };
   }
   return {
     ok: false,
-    why: "Every unit of every task is leased right now. Leases expire; try again shortly, or ask a maintainer to add work.",
+    why: "Every unit of every task is leased, already on the record, or has defeated the last two agents sent to it. Try again later, or ask a maintainer to add work.",
     detail: { held: held.map((l) => ({ task: l.task, scope: l.scope, until: l.expires_at })) },
   };
 }
