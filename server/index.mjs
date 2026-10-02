@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIssueUrl } from "./issues.mjs";
 import { buildActivity } from "./activity.mjs";
-import { clientIp, lookup as lookupPlace } from "./geo.mjs";
+import { clientIp, lookup as lookupPlace, geocode } from "./geo.mjs";
 import { TileCache, validTile, ATTRIBUTION, ATTRIBUTION_URL } from "./tiles.mjs";
 import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
@@ -250,9 +250,10 @@ export function createServer(ctx) {
         scope: z.string().trim().min(1).optional().describe("The unit of work, in the task's own unit, e.g. 'MS' or 'Texas, districts A-C'. OMIT THIS to be assigned the next free unit, which is what you usually want."),
         agent: z.string().trim().min(1).describe("Agent name and platform"),
         human: z.string().trim().min(1).describe("The person running the agent: handle or email"),
+        home: z.string().trim().min(2).max(80).optional().describe("Where your human is, as 'City, ST' (e.g. 'Boulder, CO'). Shown city-level on the live board as the ship's home port. Without it the board uses the request's network location, which for hosted agents is a cloud region, not the person."),
       },
     },
-    async ({ task, scope, agent, human }, extra) => {
+    async ({ task, scope, agent, human, home }, extra) => {
       // Being handed the next thing is the default, not a convenience. A contributor who has to ask
       // what is free, pick something, and handle a refusal is a contributor doing the server's job,
       // and a room of twenty people all picking by hand collide on the obvious choice every time.
@@ -291,10 +292,11 @@ export function createServer(ctx) {
       // address itself is never stored. It goes on the lease so every finding under it inherits it
       // without another lookup, and so that a contributor who works for hours is located once.
       try {
-        const ip = clientIp(ctx.requestHeaders ?? extra?.requestInfo?.headers ?? {});
-        const place = await lookupPlace(ip, { fetchImpl: ctx.fetchImpl });
+        let place = home ? await geocode(home, { fetchImpl: ctx.fetchImpl }) : null;
+        if (!place) { const ip = clientIp(ctx.requestHeaders ?? extra?.requestInfo?.headers ?? {}); place = await lookupPlace(ip, { fetchImpl: ctx.fetchImpl }); }
         if (place) store.updateLease?.(r.lease.id, { place });
         if (place) r.lease.place = place;
+        if (place?.declared) { const id = handleOf(human, crew.name); store.state.badges ??= {}; store.state.badges[id] = { ...(store.state.badges[id] ?? {}), home: place }; store.save(); }
       } catch { /* never let geo stand between a contributor and the work */ }
 
       return text({ ...r.lease,
@@ -970,15 +972,17 @@ export function createServer(ctx) {
       inputSchema: {
         human: z.string().trim().min(1).describe("The person whose work this is: the same handle or email their findings carry"),
         display_name: z.string().trim().min(1).max(40).optional().describe("A name to print on the badge, only if they asked for one. Otherwise the badge shows their anonymous handle."),
+        home: z.string().trim().min(2).max(80).optional().describe("Where they are, as 'City, ST'; sets their ship's home port on the live board."),
       },
     },
-    async ({ human, display_name }) => {
+    async ({ human, display_name, home }) => {
       const b = badgeFor(ctx, { human });
       if (!b.approved) return fail(`Nothing approved yet for '${human}', so there is nothing to put on a badge. Submit a finding, and once a maintainer approves it this will work. get_contributor shows where you stand.`);
       store.state.badges ??= {};
       store.state.badges[b.id] = {
         ...(store.state.badges[b.id] ?? {}),
         display_name: display_name ?? store.state.badges[b.id]?.display_name ?? null,
+        home: (home ? await geocode(home, { fetchImpl: ctx.fetchImpl }) : null) ?? store.state.badges[b.id]?.home ?? null,
         claimed_at: store.state.badges[b.id]?.claimed_at ?? new Date().toISOString(),
       };
       store.save();

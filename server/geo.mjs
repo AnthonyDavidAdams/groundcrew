@@ -80,3 +80,28 @@ export async function lookup(ip, { fetchImpl = fetch } = {}) {
 }
 
 export const _cache = cache;
+
+
+// A home a contributor declares beats the address the request came from. Cursor and other hosted
+// agents route tool calls through a cloud region, so by IP every one of them lives in Columbus, Ohio
+// (an AWS region) when the person is in Boulder. Geocoded once through Nominatim, cached by label.
+const geocache = new Map();
+export async function geocode(label, { fetchImpl = fetch } = {}) {
+  const key = String(label ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!key || key.length > 80) return null;
+  if (geocache.has(key)) return geocache.get(key);
+  let out = null;
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&countrycodes=us&q=${encodeURIComponent(key)}`;
+    const r = await fetchImpl(url, { headers: { "User-Agent": "groundcrew/0.7 (+https://github.com/AnthonyDavidAdams/groundcrew)", Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    const j = r.ok ? await r.json() : [];
+    const hit = Array.isArray(j) && j[0];
+    if (hit) {
+      const a = hit.address ?? {};
+      const city = a.city ?? a.town ?? a.village ?? a.county ?? null, region = a.state ?? null;
+      out = { city, region, country: "United States", country_code: "US", lat: Math.round(Number(hit.lat) * 10) / 10, lon: Math.round(Number(hit.lon) * 10) / 10, label: [city, region, "US"].filter(Boolean).join(", "), declared: true };
+    }
+  } catch { out = null; }
+  geocache.set(key, out);
+  return out;
+}

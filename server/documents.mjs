@@ -146,13 +146,50 @@ export class DocumentCache {
 }
 
 async function pdfPages(buf) {
+  let pages = [""], extracted_by = "none";
   try {
     const { extractText, getDocumentProxy } = await import("unpdf");
     const pdf = await getDocumentProxy(new Uint8Array(buf));
     const { text } = await extractText(pdf, { mergePages: false });
-    if (Array.isArray(text) && text.join("").trim().length) return { pages: text, extracted_by: "unpdf" };
+    if (Array.isArray(text) && text.join("").trim().length) { pages = text; extracted_by = "unpdf"; }
   } catch { /* fall through */ }
-  return { pages: [""], extracted_by: "none" };
+  // A scanned handbook has pages and no text. Small districts photocopy theirs, so this is common, and
+  // it used to come back to the agent as "nothing could be read" -- which an agent takes as "no rule".
+  // When tesseract is installed on the server, the pages are rendered and read; the agent sees the
+  // text and extracted_by says it came from OCR, so a reviewer knows to allow for a stray character.
+  const perPage = pages.join("").trim().length / Math.max(1, pages.length);
+  if (perPage < 200) {
+    const ocr = await ocrPages(buf).catch(() => null);
+    if (ocr && ocr.join("").trim().length > pages.join("").trim().length) { pages = ocr; extracted_by = "tesseract"; }
+  }
+  return { pages, extracted_by };
+}
+
+const OCR_MAX_PAGES = 60;
+let ocrAvailable = null;
+async function ocrPages(buf) {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const run = promisify(execFile);
+  if (ocrAvailable === null) {
+    try { await run("tesseract", ["--version"]); await run("pdftoppm", ["-v"]); ocrAvailable = true; } catch { ocrAvailable = false; }
+  }
+  if (!ocrAvailable) return null;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ocr-"));
+  try {
+    const pdfPath = path.join(dir, "in.pdf"); await fs.writeFile(pdfPath, buf);
+    await run("pdftoppm", ["-r", "150", "-gray", "-png", "-f", "1", "-l", String(OCR_MAX_PAGES), pdfPath, path.join(dir, "p")], { timeout: 120_000 });
+    const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".png")).sort();
+    const out = [];
+    for (const f of files) {
+      const { stdout } = await run("tesseract", [path.join(dir, f), "-", "-l", "eng", "--psm", "6"], { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+      out.push(stdout.replace(/\f/g, "").trim());
+    }
+    return out.length ? out : null;
+  } finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 
 export const pageOf = (doc, offset) => {
