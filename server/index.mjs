@@ -297,7 +297,12 @@ export function createServer(ctx) {
         if (place) r.lease.place = place;
       } catch { /* never let geo stand between a contributor and the work */ }
 
-      return text({ ...r.lease, next: `Run the task for scope '${scope}' and call submit_finding with lease_id ${r.lease.id} for each record. Renew before ${r.lease.expires_at}.` });
+      return text({ ...r.lease,
+        next: `Run the task for scope '${scope}' and call submit_finding with lease_id ${r.lease.id} for each record. Renew before ${r.lease.expires_at}.`,
+        // The budget and the exit, stated up front. An agent that cannot read a site will otherwise retry
+        // the same address for an hour, and nobody watching the board can tell that from working.
+        budget: "About twenty minutes per district. If a site blocks you, the document is a scan, or nothing readable exists, do not keep retrying: submit_finding with status 'unknown' and what you tried in notes (that counts, and keeps the district on the worklist), or release_lease and ask for the next unit. If you can read a page the server cannot, pass source_text.",
+        tell_your_human: "Your human can watch this lease on the live board; if you have gone quiet for more than twenty minutes they will see it as stalled." });
     }
   );
 
