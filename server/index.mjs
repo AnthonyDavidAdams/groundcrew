@@ -835,7 +835,8 @@ export function createServer(ctx) {
       let rows = store.state.findings.filter((f) => (status === "all" || f.status === status) && (!task || f.task === task));
       if (!include_exported) rows = rows.filter((f) => !f.exported_at);
       if (since) { const t = Date.parse(since); if (!Number.isNaN(t)) rows = rows.filter((f) => Date.parse(f.review?.at ?? f.timestamp) > t); }
-      rows = rows.slice(0, limit);
+      // Oldest review first, so a caller can page the whole history by passing the last reviewed_at back as `since`.
+      rows = rows.slice().sort((a, b) => Date.parse(a.review?.at ?? a.timestamp) - Date.parse(b.review?.at ?? b.timestamp)).slice(0, limit);
 
       if (mark_exported && rows.length) {
         const at = new Date().toISOString();
