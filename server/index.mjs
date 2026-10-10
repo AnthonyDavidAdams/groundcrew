@@ -35,6 +35,7 @@ import { normalizeScope, scopesOverlap } from "./state.mjs";
 import { StateStore, DEFAULT_LEASE_TTL_HOURS, newId, publicLease } from "./state.mjs";
 import { newAjv, formatErrors } from "./validate.mjs";
 import { verifyQuote } from "./verify.mjs";
+import { recordIdentity } from "./identity.mjs";
 import { ATTRIBUTION as CREW_ATTRIBUTION, BRAND_LINE } from "./brand.mjs";
 import { nextFreeUnit } from "./assign.mjs";
 
@@ -467,21 +468,13 @@ export function createServer(ctx) {
       // A resubmission is usually a correction, so the newer one wins and the older is superseded
       // rather than refused -- refusing would make a contributor who found a mistake unable to fix it.
       // What is refused is nothing; what is prevented is two of the same thing sitting pending.
-      // This is a generic server, so identity cannot assume one crew's field names. An authoritative id
-      // is best; failing that, the unit's name inside its region. Both are conventions the record
-      // schemas here already use -- external_id/region in the template, nces_id/state in the campaign.
-      const identity = (rec) => {
-        const id = rec?.external_id ?? rec?.nces_id ?? rec?.id ?? null;
-        if (id !== null && id !== undefined && String(id).trim()) return `id:${String(id).trim()}`;
-        const region = rec?.region ?? rec?.state ?? "";
-        return `name:${String(region).trim().toLowerCase()}|${String(rec?.name ?? "").trim().toLowerCase()}`;
-      };
+      const identity = (rec) => recordIdentity(rec, t.record_key);
       const mine = identity(record);
       // A later submission replaces an earlier pending one for the same record, unless the earlier one
       // carries a quote and a source and the new one does not: a looked-at-and-found-nothing must never
       // erase a sentence someone already found. Seen live on McComb, Mississippi.
       const sourced = (rec) => Boolean(rec && rec.quote && rec.source);
-      const superseded = store.state.findings.filter(
+      const superseded = mine === null ? [] : store.state.findings.filter(
         (f) => f.status === "pending" && f.task === task && identity(f.record) === mine && !(sourced(f.record) && !sourced(record))
       );
       for (const old of superseded) {

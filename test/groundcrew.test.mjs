@@ -82,6 +82,24 @@ A test claim.
   rmSync(join(crewDir, "data/records/bad.json"));
   ok("groundcrew validate fails on a record missing source and quote");
 
+  // A task whose records are identified by two fields, neither of them a name or an id: the shape of a
+  // bill, which is a state plus a number.
+  mkdirSync(join(crewDir, "schemas"), { recursive: true });
+  writeFileSync(join(crewDir, "schemas/bill.schema.json"), JSON.stringify({
+    $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", required: ["region", "number"],
+    properties: { region: { type: "string" }, number: { type: "string" }, notes: { type: ["string", "null"] } },
+  }));
+  const tasksYaml = readFileSync(join(crewDir, "tasks/tasks.yaml"), "utf8");
+  const billTask = (key) => `${tasksYaml.trimEnd()}\n\n  - id: bill-watch\n    title: Bill watch\n    unit: One region\n    priority: 9\n    schema: schemas/bill.schema.json\n    record_key: ${key}\n`;
+  writeFileSync(join(crewDir, "tasks/tasks.yaml"), billTask("[region, bill]"));
+  v = spawnSync(process.execPath, [cli, "validate", crewDir], { encoding: "utf8" });
+  assert.equal(v.status, 1);
+  assert.ok(/record_key field 'bill' is not a property/.test(v.stderr), v.stderr);
+  writeFileSync(join(crewDir, "tasks/tasks.yaml"), billTask("[region, number]"));
+  v = spawnSync(process.execPath, [cli, "validate", crewDir], { encoding: "utf8" });
+  assert.equal(v.status, 0, v.stderr + v.stdout);
+  ok("groundcrew validate refuses a record_key naming a field the task's schema does not have");
+
   // ---- stdio server ----
   const env = { ...process.env, GROUNDCREW_CREW: crewDir, GROUNDCREW_STATE: statePath, GROUNDCREW_MAINTAINER_TOKEN: TOKEN };
   const client = new Client({ name: "groundcrew-test", version: "0.0.0" });
@@ -251,7 +269,7 @@ A test claim.
   });
   try {
     const health = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json();
-    assert.equal(health.ok, true); assert.equal(health.crew, "Test Crew"); assert.equal(health.tasks, 2);
+    assert.equal(health.ok, true); assert.equal(health.crew, "Test Crew"); assert.equal(health.tasks, 3);
     ok(`GET /healthz on :${port}`);
 
     const hc = new Client({ name: "groundcrew-test-http", version: "0.0.0" });
@@ -346,6 +364,35 @@ A test claim.
       assert.equal(forThis.length, 1, "only the newer one is pending")
       assert.equal(forThis[0].record.notes, "corrected", "and it is the newer one")
       ok("a second finding for the same record supersedes the first instead of queueing beside it")
+    }
+
+    // Supersede is per record, not per region. Bills and dossiers have no name and no id, and keyed by
+    // state alone each new one erased the last: Mississippi SB 2296 superseded HB 306, which had
+    // superseded HB 1187, and one Alabama school board's dossier superseded another's.
+    {
+      const { recordIdentity } = await import("../server/identity.mjs")
+      const KEY = ["state", "body"]
+      assert.notEqual(recordIdentity({ state: "AL", body: "Covington County Board of Education" }, KEY),
+        recordIdentity({ state: "AL", body: "Jackson County Board of Education" }, KEY), "two boards in one state are two records")
+      assert.equal(recordIdentity({ state: "AL", body: "Covington County Board of Education" }, KEY),
+        recordIdentity({ state: "al", body: "  covington county board of education." }, KEY), "case, spacing and punctuation are not identity")
+      assert.equal(recordIdentity({ state: "MS", number: "H.B. 306" }, ["state", "number"]), recordIdentity({ state: "MS", number: "HB 306" }, ["state", "number"]))
+      assert.notEqual(recordIdentity({ state: "MS", number: "HB 306" }, ["state", "number"]), recordIdentity({ state: "MS", number: "HB 3060" }, ["state", "number"]))
+      assert.equal(recordIdentity({ state: "AL", body: "Decatur City Board of Education" }), null, "with no key, no id and no name, a record has no identity")
+      assert.equal(recordIdentity({ state: "AL", name: "X" }, ["state", "body"]), "name:al|x", "a missing key field falls back to the generic identity")
+      assert.equal(recordIdentity({ region: "WW", name: "Same District", external_id: "9999999" }), "id:9999999")
+
+      const lease = parse(await hc.callTool({ name: "claim_task", arguments: { task: "bill-watch", scope: "QQ", agent: "test", human: "bills@example.org" } }))
+      const submit = (record) => hc.callTool({ name: "submit_finding", arguments: { task: "bill-watch", lease_id: lease.id, record } }).then(parse)
+      const hb1187 = await submit({ region: "QQ", number: "HB 1187" })
+      const hb306 = await submit({ region: "QQ", number: "HB 306" })
+      const sb2296 = await submit({ region: "QQ", number: "SB 2296" })
+      for (const f of [hb1187, hb306, sb2296]) assert.equal(f.supersedes, null, "a different bill in the same region supersedes nothing")
+      const corrected = await submit({ region: "QQ", number: "H.B. 306", notes: "corrected" })
+      assert.deepEqual(corrected.supersedes, [hb306.id], "the same bill written differently replaces only itself")
+      const pend = parse(await hc.callTool({ name: "list_pending", arguments: { task: "bill-watch" } }))
+      assert.deepEqual(pend.findings.map((f) => f.id).sort(), [hb1187.id, sb2296.id, corrected.id].sort())
+      ok("findings for different records in one region coexist; a task's record_key decides what is the same record")
     }
 
     // The egress pool is optional and must be invisible when unset: a server with no proxies configured
