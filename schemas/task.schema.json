@@ -15,7 +15,8 @@
     "skill": { "type": "string", "description": "Path, relative to the crew directory, of the Markdown skill that runs the task" },
     "collection": { "type": "string", "description": "The data/ collection approved findings are merged into" },
     "scopes": { "type": "array", "items": { "type": "string" }, "description": "Optional closed list of claimable scopes. When absent any non-empty scope string may be claimed." },
-    "done_means": { "type": "array", "items": { "type": "string" }, "description": "Acceptance list a reviewer checks" }
+    "done_means": { "type": "array", "items": { "type": "string" }, "description": "Acceptance list a reviewer checks" },
+    "record_key": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true, "description": "Top-level fields of a finding's record that together identify the record, e.g. [state, number] for a bill. A new finding replaces a pending one for the same task only when every one of these fields matches, ignoring case, spacing and punctuation. When absent the server uses external_id, nces_id or id, then name within region or state." }
   },
   "additionalProperties": true
 }

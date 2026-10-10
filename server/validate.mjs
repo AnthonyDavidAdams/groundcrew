@@ -76,7 +76,12 @@ export function validateCrew(dir) {
       ids.add(t.id);
       if (t.schema && !existsSync(join(root, t.schema))) errs.push(`schema file not found: ${t.schema}`);
       if (t.skill && !existsSync(join(root, t.skill))) errs.push(`skill file not found: ${t.skill}`);
-      if (t.schema) { try { JSON.parse(readFileSync(join(root, t.schema), "utf8")); } catch (err) { if (existsSync(join(root, t.schema))) errs.push(`schema not valid JSON: ${err.message}`); } }
+      if (t.schema) {
+        try {
+          const props = JSON.parse(readFileSync(join(root, t.schema), "utf8"))?.properties;
+          for (const f of t.record_key ?? []) if (props && !(f in props)) errs.push(`record_key field '${f}' is not a property of ${t.schema}`);
+        } catch (err) { if (existsSync(join(root, t.schema))) errs.push(`schema not valid JSON: ${err.message}`); }
+      }
       report(`tasks/tasks.yaml#${i} (${t.id ?? "?"})`, ok && errs.length === 0, errs);
     });
   }

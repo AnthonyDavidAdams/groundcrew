@@ -6,7 +6,7 @@
 //   AGENTS.md              the agent contract
 //   CODE_OF_CONDUCT.md     optional
 //   facts/claims/*.md      one claim per file, YAML frontmatter + body
-//   tasks/tasks.yaml       { tasks: [ { id, title, unit, priority, schema, skill, collection?, scopes?, done_means? } ] }
+//   tasks/tasks.yaml       { tasks: [ { id, title, unit, priority, schema, skill, collection?, scopes?, done_means?, record_key? } ] }
 //   data/schema/*.json     JSON schemas (draft 2020-12)
 //   data/**/*.json|yaml    record collections; the collection name is the path under data/, the id is the filename
 //   templates/*.md         optional prose templates
@@ -73,6 +73,7 @@ export function loadTasks(dir) {
     collection: t.collection ?? null,
     scopes: Array.isArray(t.scopes) ? t.scopes : null,
     done_means: Array.isArray(t.done_means) ? t.done_means : [],
+    record_key: Array.isArray(t.record_key) ? t.record_key : null,
     description: t.description ?? null,
   }));
 }

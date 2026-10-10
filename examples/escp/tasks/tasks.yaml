@@ -54,6 +54,7 @@ tasks:
     skill: skills/bill-watch/SKILL.md
     collection: states
     scopes: [AL, AR, AZ, FL, GA, IN, KS, KY, LA, MO, MS, NC, OK, SC, TN, TX, WY]
+    record_key: [state, number]
     done_means:
       - Every bill has number, session, status, and the official URL.
       - Bills that would expand or protect corporal punishment are included and marked.
@@ -67,6 +68,7 @@ tasks:
     schema: schemas/dossier-finding.schema.json
     skill: skills/decision-maker-dossier/SKILL.md
     collection: dossiers
+    record_key: [state, body]
     done_means:
       - Every item has a URL a member would expect the public to read.
       - Nothing about family, home, health, finances, or private accounts.

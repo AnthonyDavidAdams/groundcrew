@@ -93,11 +93,14 @@ tasks:
     skill: skills/district-policy-scan/SKILL.md
     collection: districts            # where approved findings merge
     scopes: [AL, AR, AZ, FL, GA]     # optional closed list; omit to accept any non-empty scope
+    record_key: [nces_id]            # optional; the record fields that identify one record
     done_means:
       - Every non-unknown status has source, quote, last_verified.
 ```
 
 Each entry is validated by [`schemas/task.schema.json`](schemas/task.schema.json). `schema` is the schema for one finding, not for a whole data file.
+
+`record_key` names the top-level record fields that together identify one record: `[state, number]` for a bill, `[state, body]` for a board or committee. A new finding supersedes a pending finding of the same task only when every key field matches, compared without case, spacing or punctuation, so `H.B. 306` and `HB 306` are the same bill. Without `record_key` the server uses `external_id`, `nces_id` or `id`, then `name` within `region` or `state`; a record with none of those supersedes nothing. Each field MUST be a property of the task's schema.
 
 ### 1.5 `AGENTS.md` and `CODE_OF_CONDUCT.md`
 
@@ -113,7 +116,7 @@ A Ground Crew server speaks MCP over stdio and Streamable HTTP (`POST /mcp`), an
 |---|---|---|
 | `get_crew` | none | `{name, mission, values, links: {repo, site, docs, contact}, protocol, server_version, lease_ttl_hours, auto_merge, counts}` |
 | `get_agent_contract` | none | the text of `AGENTS.md`, then `CODE_OF_CONDUCT.md` |
-| `list_tasks` | none | `{count, tasks: [{id, title, description, unit, output, priority, schema, skill, collection, scopes, done_means, leased_scopes, open_scopes}]}` |
+| `list_tasks` | none | `{count, tasks: [{id, title, description, unit, output, priority, schema, skill, collection, scopes, done_means, record_key, leased_scopes, open_scopes}]}` |
 | `search_facts` | `{query, status?}` | `{query, status, count, results: [{id, claim, status, figure, as_of, primary_source, last_verified}]}`. Every word in `query` must match the id, sentence, tags, body, or `as_of`, case-insensitively. Retired claims are excluded unless `status` is given. |
 | `get_fact` | `{id}` | the claim's frontmatter plus `body`; an error naming similar ids if not found |
 | `list_records` | `{collection?, limit?, offset?, include_records?}` | without `collection`: `{collections: [{name, count}]}`; with: `{collection, count, offset, limit, ids, records?}` |
