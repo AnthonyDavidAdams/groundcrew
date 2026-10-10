@@ -22,7 +22,7 @@ import { KINDS, STATUSES, findDuplicate, writeIssueFile, syncToGitHub, manualIss
 import { buildActivity } from "./activity.mjs";
 import { clientIp, lookup as lookupPlace, geocode } from "./geo.mjs";
 import { TileCache, validTile, ATTRIBUTION, ATTRIBUTION_URL } from "./tiles.mjs";
-import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive } from "./documents.mjs";
+import { DocumentCache, search as searchDoc, tableOfContents, pageRange, archive, MAX_DOCUMENT_BYTES } from "./documents.mjs";
 import { resolve, basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -600,7 +600,7 @@ export function createServer(ctx) {
       description:
         "Download a document once, extract its text on the server, and return only what you asked for: the passages matching your terms, with page numbers and surrounding context, plus the table of contents. " +
         "Use this instead of pulling a whole handbook into your context. The extracted copy is cached and is the same copy submit_finding checks your quote against, so you are verified against the text you actually read. " +
-        "PDFs, HTML and plain text; up to 25 MB. A scanned PDF comes back with needs_ocr true and no text, which is when you read it yourself and submit with source_text.",
+        `PDFs, Word documents (.doc and .docx), HTML and plain text; up to ${Math.round(MAX_DOCUMENT_BYTES / 1048576)} MB. A scanned PDF comes back with needs_ocr true and no text, which is when you read it yourself and submit with source_text.`,
       inputSchema: {
         url: z.string().url().describe("The document. Must be the file or page itself, not a landing page."),
         terms: z.array(z.string().min(2)).optional().describe("What to look for. Defaults to the crew's document_terms."),

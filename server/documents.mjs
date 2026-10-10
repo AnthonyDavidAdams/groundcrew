@@ -8,9 +8,9 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { normalizeText, htmlToText, USER_AGENT } from "./verify.mjs";
+import { normalizeText, htmlToText, wordText, USER_AGENT, MAX_SOURCE_BYTES } from "./verify.mjs";
 
-export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = MAX_SOURCE_BYTES;
 export const DEFAULT_TIMEOUT_MS = 45_000;
 const UA = USER_AGENT;
 
@@ -98,14 +98,20 @@ export class DocumentCache {
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`document returned HTTP ${res.status}`);
+    const overCap = (n) => new Error(`document is ${(n / 1048576).toFixed(1)} MB, over the ${(MAX_DOCUMENT_BYTES / 1048576).toFixed(0)} MB cap`);
+    const declared = Number(res.headers.get("content-length"));
+    if (declared > MAX_DOCUMENT_BYTES) throw overCap(declared);
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_DOCUMENT_BYTES) throw new Error(`document is ${(buf.length / 1048576).toFixed(1)} MB, over the ${MAX_DOCUMENT_BYTES / 1048576} MB cap`);
+    if (buf.length > MAX_DOCUMENT_BYTES) throw overCap(buf.length);
     const type = (res.headers.get("content-type") ?? "").toLowerCase();
     const isPdf = type.includes("application/pdf") || buf.subarray(0, 5).toString() === "%PDF-";
 
     let pages = [], extracted_by = "text";
+    let word = null;
     if (isPdf) {
       ({ pages, extracted_by } = await pdfPages(buf));
+    } else if ((word = await wordText(buf, type)) !== null) {
+      pages = [word]; extracted_by = "word-extractor";
     } else if (type.includes("html") || /<\/?[a-z][^>]*>/i.test(buf.toString("utf8").slice(0, 2000))) {
       pages = [htmlToText(buf.toString("utf8"))]; extracted_by = "html";
     } else {
@@ -135,7 +141,7 @@ export class DocumentCache {
       fetched_at: new Date().toISOString(),
       page_count: pages.length,
       extracted_by,
-      needs_ocr: perPage < 200,
+      needs_ocr: word === null && perPage < 200,
       text,
       page_offsets,
       cached: false,

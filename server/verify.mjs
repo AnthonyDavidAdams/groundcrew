@@ -10,11 +10,14 @@ export const USER_AGENT =
 
 export const QUOTE_PREFIX_CHARS = 120;
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
-// Matches MAX_DOCUMENT_BYTES in documents.mjs deliberately. When this was smaller, a contributor
+// documents.mjs uses this same cap deliberately. When this was smaller, a contributor
 // could read a document through fetch_document and then have the finding that cites it refused at
 // submit time for being too large — the tools disagreeing with each other about the same file.
-// Real policy manuals reach this size: Madison City Alabama's is 17.6 MB over 167 pages.
-export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+// Real policy manuals reach this size: Madison City Alabama's is 17.6 MB over 167 pages, and whole
+// board policy books on ParentSquare run past 25 MB (Hinton, Oklahoma: 29.6 MB, 638 pages).
+// GROUNDCREW_MAX_DOCUMENT_MB overrides it; the whole file is held in memory while it is read.
+const envMb = Number(process.env.GROUNDCREW_MAX_DOCUMENT_MB);
+export const MAX_SOURCE_BYTES = Math.round((envMb > 0 ? envMb : 60) * 1024 * 1024);
 
 export function normalizeText(s) {
   return String(s ?? "")
@@ -75,6 +78,8 @@ export async function fetchSourceText(url, { timeoutMs = DEFAULT_FETCH_TIMEOUT_M
       const { text, extracted_by } = await pdfText(buf);
       return { text, content_type: type || "application/pdf", bytes: buf.length, pdf: true, extracted_by };
     }
+    const word = await wordText(buf, type);
+    if (word !== null) return { text: word, content_type: type, bytes: buf.length, pdf: false, extracted_by: "word-extractor" };
     const raw = buf.toString("utf8");
     const text = type.includes("html") || /<\/?[a-z][^>]*>/i.test(raw.slice(0, 2000)) ? htmlToText(raw) : raw;
     return { text, content_type: type, bytes: buf.length, pdf: false };
@@ -105,6 +110,25 @@ async function pdfText(buf) {
     if (normalizeText(text).length >= 200) return { text, extracted_by: "unpdf" };
   } catch { /* fall through to the cheap path */ }
   return { text: pdfTextBestEffort(buf), extracted_by: "operators" };
+}
+
+// Word documents, legacy .doc and .docx. Small districts post board policies as one .doc per code
+// (Kansas districts on Apptegy do it for every policy), and decoded as UTF-8 a .doc is binary. Excel
+// and PowerPoint share both containers, so the magic bytes only say "try"; null means it was not Word.
+const OLE_MAGIC = "d0cf11e0a1b11ae1";
+const looksLikeWord = (buf, type) =>
+  buf.subarray(0, 8).toString("hex") === OLE_MAGIC ||
+  (buf.subarray(0, 4).toString("latin1") === "PK\x03\x04" && (type.includes("wordprocessingml") || buf.includes("word/document.xml")));
+
+export async function wordText(buf, type = "") {
+  if (!looksLikeWord(buf, type)) return null;
+  try {
+    const { default: WordExtractor } = await import("word-extractor");
+    const doc = await new WordExtractor().extract(buf);
+    const text = [doc.getBody(), doc.getFootnotes(), doc.getEndnotes(), doc.getHeaders()]
+      .map((s) => String(s ?? "").trim()).filter(Boolean).join("\n\n");
+    return text || null;
+  } catch { return null; }
 }
 
 // Last resort for PDFs the parser cannot open: pull any uncompressed text operators.
