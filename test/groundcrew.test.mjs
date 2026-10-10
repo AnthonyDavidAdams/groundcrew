@@ -488,6 +488,37 @@ A test claim.
       ok(`a claim records where it came from (${lease.place.label})`)
     }
 
+    // An agent has to be able to see every pending finding before it submits one that would supersede
+    // it. list_pending used to return only the newest page with no way to reach the rest, and pending
+    // findings past it were superseded without anyone seeing what they held.
+    {
+      const lease = parse(await hc.callTool({ name: "claim_task", arguments: { task: "record-scan", scope: "AL: Paging", agent: "test", human: "pager@example.org" } }))
+      const recs = [1, 2, 3, 4, 5].map((n) => ({ region: "PG", name: `Paging District ${n}`, external_id: `pg-${n}`, status: "unknown", last_verified: "2026-10-10", notes: `holds field ${n}` }))
+      const ids = []
+      for (const r of recs) ids.push(parse(await hc.callTool({ name: "submit_finding", arguments: { task: "record-scan", lease_id: lease.id, record: r } })).id)
+      const list = (args) => hc.callTool({ name: "list_pending", arguments: args }).then(parse)
+
+      const newest = await list({ state: "pg", limit: 2 })
+      assert.equal(newest.count, 5, "count is every match, not the page")
+      assert.deepEqual(newest.findings.map((f) => f.id), ids.slice(3), "without an offset the page is the newest")
+      assert.equal(newest.offset, 3); assert.equal(newest.older_offset, 1); assert.equal(newest.newer_offset, null)
+      const oldest = await list({ state: "PG", offset: 0, limit: 2 })
+      assert.deepEqual(oldest.findings.map((f) => f.id), ids.slice(0, 2), "an offset reaches the oldest")
+      assert.equal(oldest.older_offset, null); assert.equal(oldest.newer_offset, 2)
+
+      assert.deepEqual((await list({ state: "PG", record: "PG 1" })).findings.map((f) => f.id), [ids[0]], "record matches an id ignoring punctuation")
+      assert.deepEqual((await list({ record: "paging district 3" })).findings.map((f) => f.id), [ids[2]], "record matches a name")
+      assert.equal((await list({ state: "PG", record: "holds field" })).count, 5, "a short notes field is searched too")
+      assert.equal((await list({ state: "QQZ" })).count, 0)
+      ok("list_pending pages through every match and filters by state and record")
+
+      const resub = parse(await hc.callTool({ name: "submit_finding", arguments: { task: "record-scan", lease_id: lease.id, record: { ...recs[2], notes: null } } }))
+      assert.deepEqual(resub.supersedes, [ids[2]])
+      assert.equal(resub.superseded[0].id, ids[2])
+      assert.equal(resub.superseded[0].record.notes, "holds field 3", "the response carries what the superseded finding said")
+      ok("submit_finding returns the records it superseded, so nothing is replaced unseen")
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/badge/deadbe.svg`);
     assert.equal(missing.status, 404);
     ok("a badge for a handle nobody holds is a 404, not a blank certificate");

@@ -519,16 +519,47 @@ export function createServer(ctx) {
       }
       store.addFinding(finding);
       const QUOTE_CHECK = { matched: "server_fetch", cached: "cached_text", agent_text: "agent_supplied", skipped: "none" };
-      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, ask: nextAskLine(store, crew, { human: lease.human }), ship: { callsign: callsign(handleOf(lease.human, crew.name)), handle: handleOf(lease.human, crew.name), watch: crew.crew.site ? `${String(crew.crew.site).replace(/\/$/, "")}/live/` : null, line: `Your ship is ${callsign(handleOf(lease.human, crew.name))}. Tell your human; they can watch it fly on the live board.` }, next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded. Submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
+      return text({ id: finding.id, status: finding.status, task, scope: lease.scope, quote_check: QUOTE_CHECK[check.status] ?? check.status, source_chars: check.source_chars ?? null, source_check: finding.source_check, disclosure: { agent: finding.agent, human: finding.human, skill: finding.skill, timestamp: now }, supersedes: finding.supersedes ?? null, superseded: superseded.length ? superseded.map((f) => ({ id: f.id, timestamp: f.timestamp, agent: f.agent, human: f.human, record: f.record, notes: f.notes ?? null })) : null, ask: nextAskLine(store, crew, { human: lease.human }), ship: { callsign: callsign(handleOf(lease.human, crew.name)), handle: handleOf(lease.human, crew.name), watch: crew.crew.site ? `${String(crew.crew.site).replace(/\/$/, "")}/live/` : null, line: `Your ship is ${callsign(handleOf(lease.human, crew.name))}. Tell your human; they can watch it fly on the live board.` }, next: finding.status === "pending" ? (finding.supersedes ? `A maintainer will review it. It replaces ${finding.supersedes.length} earlier pending finding${finding.supersedes.length === 1 ? "" : "s"} for the same record, which are now marked superseded; \`superseded\` has what they said. If one carried a field yours lacks, resubmit with it included. Otherwise submit the next record under the same lease.` : "A maintainer will review it. Submit the next record under the same lease.") : "Merged." });
     }
   );
 
   server.registerTool(
     "list_pending",
-    { title: "List pending findings", description: "Findings awaiting review, newest last, optionally for one task. Each includes the record, its source check, and its disclosure line.", inputSchema: { task: z.string().optional(), limit: z.number().int().min(1).max(500).optional() } },
-    async ({ task, limit = 100 }) => {
-      const rows = store.state.findings.filter((f) => f.status === "pending" && (!task || f.task === task));
-      return text({ count: rows.length, findings: rows.slice(-limit) });
+    {
+      title: "List pending findings",
+      description:
+        "Findings awaiting review, oldest first, each with the record, its source check, and its disclosure line. `count` is every match; one page is returned. Without `offset` you get the newest page; `older_offset` and `newer_offset` page through the rest. " +
+        "Before submitting for a record, check whether one is already pending with `record` (an id, name, bill number or body, matched against the record's short fields ignoring case, spacing and punctuation) and `state`: a new submission for the same record supersedes the pending one.",
+      inputSchema: {
+        task: z.string().optional(),
+        state: z.string().trim().min(1).optional().describe("The record's state or region, e.g. 'MS'"),
+        record: z.string().trim().min(1).optional().describe("Part of an identifying field: an NCES id, a district or body name, a bill number like 'HB 306'"),
+        offset: z.number().int().min(0).optional().describe("Position in the oldest-first list of matches; omit for the newest page"),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+    },
+    async ({ task, state, record, offset, limit = 100 }) => {
+      const squash = (v) => String(v).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+      const region = state ? state.toLowerCase() : null;
+      const needle = record ? squash(record) : null;
+      // Long text (quotes, notes) is not identity, and a bill number or id found inside a quote is noise.
+      const names = (rec) => Object.values(rec ?? {}).some((v) => ((typeof v === "string" && v.length <= 200) || typeof v === "number") && squash(v).includes(needle));
+      const rows = store.state.findings.filter((f) =>
+        f.status === "pending" && (!task || f.task === task) &&
+        (!region || String(f.record?.state ?? f.record?.region ?? "").trim().toLowerCase() === region) &&
+        (!needle || names(f.record))
+      );
+      const start = offset ?? Math.max(0, rows.length - limit);
+      const page = rows.slice(start, start + limit);
+      return text({
+        count: rows.length,
+        offset: start,
+        limit,
+        returned: page.length,
+        older_offset: start > 0 ? Math.max(0, start - limit) : null,
+        newer_offset: start + page.length < rows.length ? start + page.length : null,
+        findings: page,
+      });
     }
   );
 
