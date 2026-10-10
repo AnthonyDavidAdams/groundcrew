@@ -34,6 +34,10 @@ const fixture = createHttpServer((req, res) => {
     res.end(`<html><head><title>Policy JDA</title><style>p{}</style></head><body><h1>JDA   Corporal Punishment</h1>
       <p>Corporal   punishment may be administered by the principal or the principal&#39;s designee
       in the presence of another certified employee.</p><script>var x = 1;</script></body></html>`);
+  } else if (req.url === "/JDA.doc" || req.url === "/JDA.docx") {
+    const doc = req.url.endsWith(".doc");
+    res.writeHead(200, { "Content-Type": doc ? "application/msword" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    res.end(readFileSync(join(here, "fixtures", doc ? "policy.doc" : "policy.docx")));
   } else { res.writeHead(404); res.end("no"); }
 });
 await new Promise((r) => fixture.listen(0, "127.0.0.1", r));
@@ -420,6 +424,35 @@ A test claim.
       assert.equal(looksBinary("<html><body><p>Corporal punishment may be used.</p></body></html>"), false)
       assert.equal(looksBinary(""), false, "an empty document is empty, not binary")
       ok("a document that decodes to binary is refused rather than served as text")
+    }
+
+    // Kansas districts post every board policy as its own legacy .doc. fetch_document refused them as
+    // binary while the submit-time quote check matched raw strings in the same bytes, so the tool an
+    // agent searches with and the tool that verifies it disagreed about one file.
+    {
+      const WORD_QUOTE = "Corporal punishment shall not be administered to any student by any employee of the district."
+      for (const ext of ["doc", "docx"]) {
+        const got = parse(await hc.callTool({ name: "fetch_document", arguments: { url: `${fixtureUrl}/JDA.${ext}`, terms: ["corporal punishment shall not"], archive: false } }))
+        assert.equal(got.extracted_by, "word-extractor", `.${ext} is read as Word, got ${JSON.stringify(got).slice(0, 200)}`)
+        assert.ok(JSON.stringify(got).includes("administered to any student"), `.${ext} search returns the passage`)
+      }
+      const { fetchSourceText, quoteAppears } = await import("../server/verify.mjs")
+      const src = await fetchSourceText(`${fixtureUrl}/JDA.doc`)
+      assert.equal(src.extracted_by, "word-extractor")
+      assert.ok(quoteAppears(WORD_QUOTE, src.text), "the submit-time check reads the same text")
+      ok("fetch_document and the quote check both read .doc and .docx")
+    }
+
+    // A policy book over the cap is refused before its body is downloaded, and the default is large
+    // enough for a whole board manual (Hinton, Oklahoma: 29.6 MB).
+    {
+      const { DocumentCache, MAX_DOCUMENT_BYTES } = await import("../server/documents.mjs")
+      assert.ok(MAX_DOCUMENT_BYTES >= 60 * 1024 * 1024, "the default cap holds a 30 MB policy book")
+      let read = false
+      const huge = new DocumentCache({ fetchImpl: async () => ({ ok: true, status: 200, url: "https://example.org/big.pdf", headers: new Headers({ "content-length": String(MAX_DOCUMENT_BYTES + 1), "content-type": "application/pdf" }), arrayBuffer: async () => { read = true; return new ArrayBuffer(0) } }) })
+      await assert.rejects(huge.get("https://example.org/big.pdf"), /over the 60 MB cap/)
+      assert.equal(read, false, "the body is never downloaded")
+      ok("a document over the cap is refused from its declared length")
     }
 
     // A vendor that answers one address with a stub, HTTP 200 and no challenge text, is invisible to a
