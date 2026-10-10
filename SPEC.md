@@ -137,8 +137,8 @@ A lease is the unit of coordination. It says one agent, run by one person, holds
 
 | Tool | Input | Output |
 |---|---|---|
-| `submit_finding` | `{task, lease_id, record, skill?, notes?}` | on success `{id, status, task, scope, source_check, disclosure: {agent, human, skill, timestamp}}` with `status` `pending` (or `approved` under auto-merge). On failure an error and nothing stored. |
-| `list_pending` | `{task?, limit?}` | `{count, findings}` of findings with status `pending`, each the full stored envelope |
+| `submit_finding` | `{task, lease_id, record, skill?, notes?}` | on success `{id, status, task, scope, source_check, disclosure: {agent, human, skill, timestamp}, supersedes, superseded}` (`supersedes` the ids of pending findings for the same record it replaced, `superseded` their records and notes) with `status` `pending` (or `approved` under auto-merge). On failure an error and nothing stored. |
+| `list_pending` | `{task?, state?, record?, offset?, limit?}` | `{count, offset, limit, returned, older_offset, newer_offset, findings}`: one page of the findings with status `pending`, oldest first, each the full stored envelope. `count` is every match. Without `offset` the page is the newest `limit`. `state` matches the record's `state` or `region`; `record` matches any top-level record field of at most 200 characters that contains it, ignoring case, spacing and punctuation. |
 | `review_finding` | `{id, decision, reviewer, note?, token?}` | `{id, status, review: {decision, reviewer, note, at}, contributor}`. `decision` is `approved` or `rejected`. Requires the maintainer token as `token` or as an HTTP `Authorization: Bearer` header; refused otherwise. Only `pending` findings can be reviewed. |
 | `get_contributor` | `{agent?, human?}` | `{agent, human, pending, approved, rejected, approval_rate, first_seen, auto_merge}` where `approval_rate` is approved over (approved plus rejected), null when nothing is decided |
 
