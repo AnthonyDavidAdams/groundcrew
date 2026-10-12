@@ -1264,7 +1264,15 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       const rows = ctx.store.state.petition;
       const counts = () => { const by = {}; let national = 0; for (const r of rows) { if (r.level === "national") national++; else by[r.state] = (by[r.state] || 0) + 1; } return { total: rows.length, national, by_state: by }; };
       if (req.method === "GET") { res.writeHead(200, headers); return res.end(JSON.stringify(counts())); }
-      if (req.method !== "POST") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET or POST" })); }
+      if (req.method === "DELETE") {
+        // maintainer only: remove one signature (a test, a withdrawal request)
+        const given = (req.headers.authorization || "").replace(/^Bearer\s+/i, ""); const expected = ctx.maintainerToken();
+        if (!expected || given !== expected) { res.writeHead(403, headers); return res.end(JSON.stringify({ error: "maintainer token" })); }
+        const email = String(url.searchParams.get("email") || "").toLowerCase(); const before = rows.length;
+        ctx.store.state.petition = rows.filter((r) => r.email !== email); ctx.store.save();
+        res.writeHead(200, headers); return res.end(JSON.stringify({ removed: before - ctx.store.state.petition.length }));
+      }
+      if (req.method !== "POST") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET, POST or DELETE" })); }
       let b; try { b = JSON.parse((await readBody(req)) || "{}"); } catch { res.writeHead(400, headers); return res.end(JSON.stringify({ error: "bad json" })); }
       const name = String(b.name || "").trim().slice(0, 120), email = String(b.email || "").trim().toLowerCase().slice(0, 200);
       const state = String(b.state || "").trim().toUpperCase().slice(0, 2), zip = String(b.zip || "").trim().slice(0, 10);
