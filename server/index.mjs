@@ -1147,6 +1147,7 @@ export async function runStdio(ctx) {
 export async function runHttp(ctx, { argv = process.argv, env = process.env } = {}) {
   const port = Number(arg(argv, "--port", env.PORT ?? 3000));
   const host = arg(argv, "--host", env.HOST ?? "0.0.0.0");
+  const readBody = (req) => new Promise((resolve, reject) => { let d = ""; req.on("data", (c) => { d += c; if (d.length > 1e6) { reject(new Error("too large")); req.destroy(); } }); req.on("end", () => resolve(d)); req.on("error", reject); });
   const json = (res, code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
   const rpcErr = (res, code, message) => json(res, code, { jsonrpc: "2.0", error: { code: -32000, message }, id: null });
 
