@@ -299,7 +299,13 @@ export function createServer(ctx) {
         if (place?.declared) { const id = handleOf(human, crew.name); store.state.badges ??= {}; store.state.badges[id] = { ...(store.state.badges[id] ?? {}), home: place }; store.save(); }
       } catch { /* never let geo stand between a contributor and the work */ }
 
+      // The units behind the scope, inline, when the crew can describe them. A connector that shows an
+      // agent only some of the tools (ChatGPT, 2026-10-12: "get_worklist is not exposed") must still be
+      // able to turn "MO: districts 1-10" into ten districts from this one answer.
+      let units = null;
+      try { units = ctx.describeScope ? await ctx.describeScope(scope, task) : null; } catch { units = null; }
       return text({ ...r.lease,
+        ...(units ? { units } : {}),
         next: `Run the task for scope '${scope}' and call submit_finding with lease_id ${r.lease.id} for each record. Renew before ${r.lease.expires_at}.`,
         // The budget and the exit, stated up front. An agent that cannot read a site will otherwise retry
         // the same address for an hour, and nobody watching the board can tell that from working.
