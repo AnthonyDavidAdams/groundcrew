@@ -11,7 +11,8 @@
 //   GROUNDCREW_LEASE_TTL_HOURS         lease length, default 4 (crew.json lease_ttl_hours also works)
 //   PORT, HOST                          HTTP bind when --port/--host are not given
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, createWriteStream, readdirSync, statSync } from "node:fs";
+import { dirname as pathDirname, join as pathJoin, extname } from "node:path";
 import { createServer as createHttpServer } from "node:http";
 import { badgeFor, badgeSvg, badgePng, TIERS } from "./badge.mjs";
 import { egressFetch, proxyCount, egressStats } from "./egress.mjs";
@@ -1257,6 +1258,47 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
 
     // The petition: signatures for the campaign at national and state level. Names and emails are
     // kept in the store and never served; the public endpoint carries counts only.
+    // Videos and photos from districts: a superintendent answers the certificate with a 30-second selfie.
+    // The browser page posts the file raw with its name in a header; it lands beside the state file.
+    // The listing is maintainer-only; the campaign's outreach job picks new ones up and tells Anthony.
+    if (url.pathname === "/upload" || url.pathname === "/uploads.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type, x-file-name, x-district, x-name, x-email, x-consent", "Cache-Control": "no-store" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "POST, GET, OPTIONS" }); return res.end(); }
+      const dir = pathJoin(pathDirname(ctx.statePath), "uploads"); mkdirSync(dir, { recursive: true });
+      ctx.store.state.uploads ??= [];
+      if (url.pathname === "/uploads.json") {
+        const given = (req.headers.authorization || "").replace(/^Bearer\s+/i, ""); const expected = ctx.maintainerToken();
+        if (!expected || given !== expected) { res.writeHead(403, headers); return res.end(JSON.stringify({ error: "maintainer token" })); }
+        res.writeHead(200, headers); return res.end(JSON.stringify({ uploads: ctx.store.state.uploads }));
+      }
+      if (req.method !== "POST") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "POST" })); }
+      const name = String(req.headers["x-file-name"] || "upload.bin").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
+      const ext = (extname(name) || ".bin").toLowerCase();
+      if (![".mp4", ".mov", ".m4v", ".webm", ".jpg", ".jpeg", ".png", ".heic"].includes(ext)) { res.writeHead(400, headers); return res.end(JSON.stringify({ error: "video (mp4, mov, webm) or photo (jpg, png) only" })); }
+      const consent = String(req.headers["x-consent"] || "") === "yes";
+      if (!consent) { res.writeHead(400, headers); return res.end(JSON.stringify({ error: "consent is required" })); }
+      const id = `up_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; const path = pathJoin(dir, id + ext);
+      const out = createWriteStream(path); let bytes = 0; const MAX = 300 * 1024 * 1024;
+      req.on("data", (c) => { bytes += c.length; if (bytes > MAX) { out.destroy(); req.destroy(); } });
+      req.pipe(out);
+      out.on("finish", () => {
+        const row = { id, file: id + ext, bytes, at: new Date().toISOString(), district: String(req.headers["x-district"] || "").slice(0, 160), name: String(req.headers["x-name"] || "").slice(0, 120), email: String(req.headers["x-email"] || "").slice(0, 200), consent: true };
+        ctx.store.state.uploads.push(row); ctx.store.save();
+        res.writeHead(200, headers); res.end(JSON.stringify({ ok: true, id, bytes }));
+      });
+      out.on("error", () => { res.writeHead(500, headers); res.end(JSON.stringify({ error: "could not save" })); });
+      return;
+    }
+    // Serve one upload back to a maintainer (for review and download).
+    if (url.pathname.startsWith("/uploads/")) {
+      const given = (url.searchParams.get("token") || (req.headers.authorization || "").replace(/^Bearer\s+/i, "")); const expected = ctx.maintainerToken();
+      if (!expected || given !== expected) { res.writeHead(403); return res.end("maintainer token"); }
+      const file = url.pathname.slice("/uploads/".length).replace(/[^A-Za-z0-9._-]/g, ""); const path = pathJoin(pathDirname(ctx.statePath), "uploads", file);
+      if (!existsSync(path)) { res.writeHead(404); return res.end("not found"); }
+      const { createReadStream } = await import("node:fs"); res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": statSync(path).size, "Content-Disposition": `attachment; filename="${file}"` });
+      return createReadStream(path).pipe(res);
+    }
+
     if (url.pathname === "/petition" || url.pathname === "/petition.json") {
       const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type", "Cache-Control": "no-store" };
       if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" }); return res.end(); }
