@@ -1254,6 +1254,26 @@ export async function runHttp(ctx, { argv = process.argv, env = process.env } = 
       return res.end(svg);
     }
 
+    // The petition: signatures for the campaign at national and state level. Names and emails are
+    // kept in the store and never served; the public endpoint carries counts only.
+    if (url.pathname === "/petition" || url.pathname === "/petition.json") {
+      const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type", "Cache-Control": "no-store" };
+      if (req.method === "OPTIONS") { res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" }); return res.end(); }
+      ctx.store.state.petition ??= [];
+      const rows = ctx.store.state.petition;
+      const counts = () => { const by = {}; let national = 0; for (const r of rows) { if (r.level === "national") national++; else by[r.state] = (by[r.state] || 0) + 1; } return { total: rows.length, national, by_state: by }; };
+      if (req.method === "GET") { res.writeHead(200, headers); return res.end(JSON.stringify(counts())); }
+      if (req.method !== "POST") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "GET or POST" })); }
+      let b; try { b = JSON.parse((await readBody(req)) || "{}"); } catch { res.writeHead(400, headers); return res.end(JSON.stringify({ error: "bad json" })); }
+      const name = String(b.name || "").trim().slice(0, 120), email = String(b.email || "").trim().toLowerCase().slice(0, 200);
+      const state = String(b.state || "").trim().toUpperCase().slice(0, 2), zip = String(b.zip || "").trim().slice(0, 10);
+      const level = b.level === "state" ? "state" : "national"; const message = String(b.message || "").trim().slice(0, 500);
+      if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || (level === "state" && !/^[A-Z]{2}$/.test(state))) { res.writeHead(400, headers); return res.end(JSON.stringify({ error: "name, a real email, and a state for a state petition" })); }
+      const key = `${email}|${level}|${level === "state" ? state : ""}`;
+      if (!rows.some((r) => r.key === key)) { rows.push({ key, name, email, state: state || null, zip: zip || null, level, message: message || null, at: new Date().toISOString(), ip_city: null }); if (rows.length > 500000) rows.shift(); ctx.store.save(); }
+      res.writeHead(200, headers); return res.end(JSON.stringify({ ok: true, ...counts() }));
+    }
+
     // The fleet: ships, flights and one cockpit at a time. Read by the campaign's flight board.
     if (url.pathname === "/fleet.json") {
       const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=15" };
